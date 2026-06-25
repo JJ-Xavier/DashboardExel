@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FinDash — Importar Dados</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<link rel="stylesheet" href="CSS/Entrada.css">
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">
+      <svg viewBox="0 0 20 20"><path d="M3 5h14M3 10h14M3 15h9"/><rect x="12" y="11" width="6" height="6" rx="1"/></svg>
+    </div>
+    FinDash
+  </div>
+  <nav class="header-nav">
+    <a href="Login.html" class="btn-ghost">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3"/></svg>
+      Entrar
+    </a>
+  </nav>
+</header>
+
+<main>
+  <div class="upload-container">
+    <h1 class="page-title">Importar planilha financeira</h1>
+    <p class="page-subtitle">Faça upload do seu arquivo Excel para gerar o dashboard automaticamente.</p>
+
+    <div class="upload-card">
+      <div class="drop-zone" id="dropZone">
+        <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" />
+        <div class="upload-icon-wrap">
+          <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        </div>
+        <p class="drop-label">Arraste o arquivo aqui ou <span>clique para selecionar</span></p>
+        <p class="drop-hint">Suporta .xlsx, .xls e .csv — até 25 MB</p>
+      </div>
+
+      <div class="file-preview" id="filePreview">
+        <div class="file-icon">
+          <svg viewBox="0 0 20 20"><path d="M4 2h8l4 4v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/><polyline points="12 2 12 6 16 6"/><line x1="7" y1="10" x2="13" y2="10"/><line x1="7" y1="13" x2="13" y2="13"/></svg>
+        </div>
+        <div class="file-info">
+          <p class="file-name" id="fileName">relatorio_financeiro.xlsx</p>
+          <p class="file-size" id="fileSize">2.4 MB • 1.847 linhas detectadas</p>
+        </div>
+        <button class="file-remove" id="removeFile" title="Remover arquivo">
+          <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+
+      <div class="mapping-section" id="mappingSection">
+        <p class="mapping-title">Mapeamento de colunas</p>
+        <div class="mapping-grid">
+          <div class="mapping-item">
+            <label>Data</label>
+            <select><option>Coluna A — Data</option><option>Coluna B — Mês</option></select>
+          </div>
+          <div class="mapping-item">
+            <label>Receita</label>
+            <select><option>Coluna C — Receita</option><option>Coluna D — Valor</option></select>
+          </div>
+          <div class="mapping-item">
+            <label>Custo</label>
+            <select><option>Coluna D — Custo</option><option>Coluna E — Despesa</option></select>
+          </div>
+          <div class="mapping-item">
+            <label>Centro de custo</label>
+            <select><option>Coluna E — Área</option><option>Coluna F — Depto</option></select>
+          </div>
+          <div class="mapping-item">
+            <label>Categoria</label>
+            <select><option>Coluna F — Categoria</option><option>Coluna G — Tipo</option></select>
+          </div>
+          <div class="mapping-item">
+            <label>Orçamento previsto</label>
+            <select><option>Coluna G — Budget</option><option>Coluna H — Meta</option></select>
+          </div>
+        </div>
+      </div>
+
+      <div class="upload-divider" id="divider">
+        <div class="divider-line"></div>
+        <span class="divider-text">formatos aceitos</span>
+        <div class="divider-line"></div>
+      </div>
+
+      <div class="card-footer">
+        <span class="footer-info"><strong>Dados seguros</strong> — processados localmente</span>
+        <button class="btn-upload" id="btnUpload" onclick="startUpload()">
+          <svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          Gerar Dashboard
+        </button>
+      </div>
+    </div>
+
+    <div class="tips">
+      <div class="tip">
+        <span class="tip-icon">📊</span>
+        <p class="tip-title">Excel ou CSV</p>
+        <p class="tip-text">Importe direto da sua planilha sem nenhuma formatação especial.</p>
+      </div>
+      <div class="tip">
+        <span class="tip-icon">⚡</span>
+        <p class="tip-title">Processamento rápido</p>
+        <p class="tip-text">Até 100 mil linhas processadas em segundos.</p>
+      </div>
+      <div class="tip">
+        <span class="tip-icon">🔒</span>
+        <p class="tip-title">Privacidade total</p>
+        <p class="tip-text">Seus dados não saem do seu dispositivo.</p>
+      </div>
+    </div>
+  </div>
+</main>
+
+<div class="progress-overlay" id="progressOverlay">
+  <p class="progress-title" id="progressMsg">Lendo arquivo...</p>
+  <div class="progress-bar-wrap">
+    <div class="progress-bar" id="progressBar"></div>
+  </div>
+  <p class="progress-pct" id="progressPct">0%</p>
+</div>
+    <script src="JS/Entrada.js"></script>
+</body>
+</html>
