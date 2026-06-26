@@ -139,3 +139,21 @@ function updatePeriod(val) {
 function exportPDF() {
   window.print();
 }
+
+// Abre/Fecha a Área do Usuário
+function toggleUserArea() {
+  const btn = document.querySelector('.user-btn');
+  const dropdown = document.getElementById('userDropdown');
+  
+  btn.classList.toggle('active');
+  dropdown.classList.toggle('show');
+}
+
+// Função para limpar os dados atuais (mantém a que criamos)
+function limparDados() {
+  const confirmacao = confirm("Tem certeza que deseja excluir os dados atuais? Você precisará importar uma nova planilha.");
+  if (confirmacao) {
+    localStorage.removeItem('findash_real_data');
+    window.location.reload();
+  }
+}

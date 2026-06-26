@@ -231,3 +231,95 @@ body {
   box-shadow: 0 4px 12px rgba(24, 95, 165, 0.15);
 }
 .empty-state-btn:hover { background: var(--blue-700); transform: translateY(-1px); box-shadow: 0 6px 16px rgba(24, 95, 165, 0.2); }
+
+/* ÁREA DO USUÁRIO (Menu Expansível) */
+.sidebar-footer {
+  margin-top: auto;
+  border-top: 1px solid var(--gray-100);
+  padding: 16px 8px 0 8px;
+}
+
+.user-area {
+  position: relative;
+  width: 100%;
+}
+
+.user-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  padding: 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--gray-700);
+  transition: background 0.2s;
+  font-family: inherit;
+}
+
+.user-btn:hover { background: var(--gray-100); }
+
+.user-avatar {
+  background: var(--gray-200);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.user-avatar svg { width: 18px; height: 18px; }
+
+.user-name { font-size: 14px; font-weight: 500; color: var(--gray-800); }
+
+.chevron {
+  width: 16px; height: 16px;
+  margin-left: auto;
+  stroke: var(--gray-500);
+  fill: none; stroke-width: 2;
+  transition: transform 0.3s ease;
+}
+
+/* Quando o botão está ativo, a setinha gira para cima */
+.user-btn.active .chevron { transform: rotate(180deg); }
+
+/* Menu Suspenso */
+.user-dropdown {
+  display: none; /* Escondido por padrão */
+  flex-direction: column;
+  background: #ffffff;
+  border: 1px solid var(--gray-200);
+  border-radius: 8px;
+  margin-top: 8px;
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+/* Classe que o JS vai adicionar para mostrar o menu */
+.user-dropdown.show { display: flex; }
+
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  background: transparent;
+  border: none;
+  width: 100%;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--gray-700);
+  cursor: pointer;
+  font-family: inherit;
+  text-decoration: none;
+  transition: background 0.15s;
+}
+
+.dropdown-item svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2; }
+.dropdown-item:hover { background: var(--gray-50); }
+
+.dropdown-item.danger { color: var(--red-500); }
+.dropdown-item.danger:hover { background: var(--red-50); color: var(--red-700); }
