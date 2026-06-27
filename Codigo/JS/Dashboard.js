@@ -1,176 +1,274 @@
-// Aguarda a página carregar para não dar conflito com o HTML
+// ============================================================
+// DASHBOARD.JS — Dashboard de Faturamento e Reembolsáveis
+// Baseado na planilha: BASE DE FATURAMENTO REEMBOLSAVEIS
+// Campos: os, data, cliente, tipo, modelo, natureza,
+//         moSem, pecSem, taxa, faturar, custo, status
+// ============================================================
+
 document.addEventListener('DOMContentLoaded', () => {
-  const dadosSalvos = localStorage.getItem('findash_real_data');
-  const dashboardData = document.getElementById('dashboardData');
-  const emptyState = document.getElementById('emptyState');
+  const divDados  = document.getElementById('dashboardData');
+  const divVazio  = document.getElementById('emptyState');
 
-  let dadosFaturamento = [];
+  let dados = [], meta = {};
+  try { dados = JSON.parse(localStorage.getItem('findash_real_data') || '[]'); } catch(e) { dados = []; }
+  try { meta  = JSON.parse(localStorage.getItem('findash_meta')      || '{}'); } catch(e) { meta  = {}; }
 
-  // Tenta ler os dados do cache do navegador
-  if (dadosSalvos) {
-    try {
-      dadosFaturamento = JSON.parse(dadosSalvos);
-    } catch (err) {
-      console.error("Erro ao ler os dados:", err);
+  if (!dados.length) {
+    if (divDados) divDados.style.display = 'none';
+    if (divVazio) divVazio.style.display = 'flex';
+    return;
+  }
+  if (divDados) divDados.style.display = 'block';
+  if (divVazio) divVazio.style.display = 'none';
+
+  // ==========================================
+  // 1. PROCESSAMENTO
+  // ==========================================
+  const mesesMap  = {};   // { 'YYYY-MM': { faturar, custo, osSet, sinistro, corretivo } }
+  const tiposMap  = {};   // { tipo: count }
+  const clientesMap = {}; // { cliente: faturar }
+  const naturezaMap = {}; // { natureza: count }
+
+  let totalFaturar = 0, totalCusto = 0;
+  const osUnicas = new Set();
+
+  dados.forEach(d => {
+    const fat   = Number(d.faturar) || 0;
+    const custo = Number(d.custo)   || 0;
+    const tipo  = d.tipo  || 'Outros';
+    const nat   = d.natureza && d.natureza !== '' ? d.natureza : 'Sem categoria';
+
+    totalFaturar += fat;
+    totalCusto   += custo;
+    if (d.os && d.os !== '-') osUnicas.add(d.os);
+
+    // Agrupamento por mês
+    let anoMes = '';
+    if (d.data && typeof d.data === 'string' && d.data.length >= 7) {
+      anoMes = d.data.substring(0, 7);
+    } else if (typeof d.data === 'number') {
+      const dt = new Date(Math.round((d.data - 25569) * 86400000));
+      if (!isNaN(dt)) anoMes = dt.toISOString().substring(0, 7);
     }
-  }
 
-  // A GRANDE CORREÇÃO DE VISIBILIDADE ESTÁ AQUI:
-  // 1. Se não houver dados ou a lista estiver vazia (Usuário acabou de excluir)
-  if (!dadosFaturamento || dadosFaturamento.length === 0) {
-    if (dashboardData) dashboardData.style.display = 'none'; // Esconde os gráficos
-    if (emptyState) emptyState.style.display = 'flex';       // Mostra a mensagem de "Nenhum Dado"
-    return; // Para o script aqui, não tenta desenhar gráficos
-  } 
-  
-  // 2. Se houver dados reais importados (Usuário subiu o arquivo)
-  if (dashboardData) dashboardData.style.display = 'block';  // Mostra os gráficos
-  if (emptyState) emptyState.style.display = 'none';         // Esconde a mensagem de "Nenhum Dado"
-
-  // INÍCIO DA RENDERIZAÇÃO DOS DADOS REAIS
-  const metricas = processarMetricasDinamicas(dadosFaturamento);
-
-  // Alimentação dos KPIs Superiores
-  try {
-    const kpisGerais = document.querySelectorAll('.card-value, .kpi-value, .stat-value, .card-number');
-    if (kpisGerais.length >= 2) {
-      kpisGerais[0].textContent = 'R$ ' + metricas.totalReceita.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-      kpisGerais[1].textContent = 'R$ ' + metricas.totalCusto.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-      if (kpisGerais[2]) {
-        const margemGeral = metricas.totalReceita > 0 ? ((metricas.totalReceita - metricas.totalCusto) / metricas.totalReceita * 100) : 0;
-        kpisGerais[2].textContent = margemGeral.toFixed(1) + '%';
-      }
+    if (anoMes) {
+      if (!mesesMap[anoMes]) mesesMap[anoMes] = { faturar: 0, custo: 0, osSet: new Set(), sinistro: 0, corretivo: 0 };
+      mesesMap[anoMes].faturar += fat;
+      mesesMap[anoMes].custo   += custo;
+      if (d.os && d.os !== '-') mesesMap[anoMes].osSet.add(d.os);
+      if (tipo === 'SINISTRO')  mesesMap[anoMes].sinistro++;
+      else if (tipo === 'CORRETIVO') mesesMap[anoMes].corretivo++;
     }
-  } catch (e) {
-    console.log("Aviso: Texto dos KPIs não encontrado no HTML.");
+
+    tiposMap[tipo]         = (tiposMap[tipo]         || 0) + 1;
+    naturezaMap[nat]       = (naturezaMap[nat]        || 0) + 1;
+    if (d.cliente && d.cliente !== '-') {
+      clientesMap[d.cliente] = (clientesMap[d.cliente] || 0) + fat;
+    }
+  });
+
+  const mesesOrd = Object.keys(mesesMap).sort();
+  const margem   = totalFaturar > 0 ? ((totalFaturar - totalCusto) / totalFaturar * 100) : 0;
+
+  // ==========================================
+  // 2. KPIs
+  // ==========================================
+  const fmt = v => 'R$ ' + v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+
+  set('kpiReceita', fmt(totalFaturar));
+  set('kpiCusto',   fmt(totalCusto));
+  set('kpiMargem',  margem.toFixed(1) + '%');
+  set('kpiBudget',  osUnicas.size.toString());
+
+  // Variação: compara último mês com penúltimo
+  if (mesesOrd.length >= 2) {
+    const ult  = mesesMap[mesesOrd[mesesOrd.length - 1]];
+    const penu = mesesMap[mesesOrd[mesesOrd.length - 2]];
+    const varFat = penu.faturar > 0 ? ((ult.faturar - penu.faturar) / penu.faturar * 100) : 0;
+    const varCus = penu.custo   > 0 ? ((ult.custo   - penu.custo)   / penu.custo   * 100) : 0;
+
+    const elRV = document.getElementById('kpiReceitaVar');
+    const elCV = document.getElementById('kpiCustoVar');
+    if (elRV) { elRV.textContent = (varFat >= 0 ? '+' : '') + varFat.toFixed(1) + '%'; elRV.className = 'kpi-badge ' + (varFat >= 0 ? 'up' : 'down'); }
+    if (elCV) { elCV.textContent = (varCus >= 0 ? '+' : '') + varCus.toFixed(1) + '%'; elCV.className = 'kpi-badge ' + (varCus <= 0 ? 'up' : 'down'); }
   }
 
-  // Alimentação da Tabela de Últimos Lançamentos
-  const tabelaCorpo = document.querySelector('.data-table tbody');
-  if (tabelaCorpo) {
-    tabelaCorpo.innerHTML = '';
-    const ultimosLancamentos = dadosFaturamento.slice(0, 6);
-    
-    ultimosLancamentos.forEach(item => {
-      const tr = document.createElement('tr');
-      let statusClass = 'status-ok';
-      const t = (item.tipo || '').toLowerCase();
-      if (t.includes('corr')) statusClass = 'status-warn';
-      if (t.includes('sinis')) statusClass = 'status-over';
+  // Adapta o label do KPI de Budget para "OS Únicas"
+  const kpiBLabel = document.querySelector('[style="--kpi-color: var(--amber-500)"] .kpi-label');
+  if (kpiBLabel) kpiBLabel.innerHTML = `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg> OS únicas`;
+  const elBStatus = document.getElementById('kpiBudgetStatus');
+  const elBText   = document.getElementById('kpiBudgetText');
+  if (elBStatus) { elBStatus.textContent = dados.length + ' linhas'; elBStatus.className = 'kpi-badge'; }
+  if (elBText)   elBText.textContent = 'na base de dados';
 
-      tr.innerHTML = `
-        <td>${item.os || '#'}</td>
-        <td>${item.cliente || 'Não informado'}</td>
-        <td>${item.veiculo || '-'}</td>
-        <td><span class="status-pill ${statusClass}">${item.tipo || 'Outro'}</span></td>
-        <td>R$ ${(item.receita || 0).toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
-      `;
-      tabelaCorpo.appendChild(tr);
-    });
+  // Topbar period
+  const topPeriod = document.getElementById('topbarPeriod');
+  if (topPeriod && mesesOrd.length) {
+    const labelMes = m => {
+      const [y, mo] = m.split('-');
+      return new Date(+y, +mo - 1, 1).toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' });
+    };
+    const arq = meta.arquivo ? ` · ${meta.arquivo}` : '';
+    topPeriod.textContent = `${labelMes(mesesOrd[0])} → ${labelMes(mesesOrd[mesesOrd.length - 1])} · ${osUnicas.size} OS${arq}`;
   }
 
-  // Desenha os Gráficos do Chart.js
-  const lineCanvas = document.getElementById('lineChart');
-  if (lineCanvas) {
-    new Chart(lineCanvas, {
+  // ==========================================
+  // 3. GRÁFICO 1 — Faturar vs Custo por mês
+  // ==========================================
+  const labFmt = mesesOrd.map(m => {
+    const [y, mo] = m.split('-');
+    return new Date(+y, +mo - 1, 1).toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' }).replace('.', '');
+  });
+  const fatArr    = mesesOrd.map(m => mesesMap[m].faturar);
+  const custoArr  = mesesOrd.map(m => mesesMap[m].custo);
+  const margemArr = fatArr.map((f, i) => f > 0 ? Math.round(((f - custoArr[i]) / f) * 100) : 0);
+
+  const lineCtx = document.getElementById('lineChart');
+  if (lineCtx) {
+    new Chart(lineCtx.getContext('2d'), {
       type: 'bar',
       data: {
-        labels: metricas.mesesLabels,
+        labels: labFmt,
         datasets: [
-          { label: 'Receita', data: metricas.receitasPorMes, backgroundColor: 'rgba(24, 95, 165, 0.85)', borderRadius: 4, order: 2 },
-          { label: 'Custo', data: metricas.custosPorMes, backgroundColor: 'rgba(226, 75, 74, 0.75)', borderRadius: 4, order: 2 },
-          { label: 'Margem %', data: metricas.margensPorMes, type: 'line', borderColor: '#639922', backgroundColor: '#639922', yAxisID: 'y1', order: 1 }
-        ]
+          { label: 'Faturamento', data: fatArr,   backgroundColor: 'rgba(24,95,165,0.85)', borderRadius: 5, order: 2 },
+          { label: 'Custo base',  data: custoArr, backgroundColor: 'rgba(226,75,74,0.72)', borderRadius: 5, order: 2 },
+          {
+            label: 'Margem %', data: margemArr, type: 'line',
+            borderColor: '#639922', backgroundColor: 'rgba(99,153,34,0.06)',
+            borderWidth: 2.5, pointRadius: 4, pointBackgroundColor: '#639922',
+            tension: 0.35, yAxisID: 'yMargem', order: 1,
+          },
+        ],
       },
       options: {
-        responsive: true,
-        maintainAspectRatio: false,
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: ctx => {
+                if (ctx.dataset.label === 'Margem %') return 'Margem: ' + ctx.parsed.y + '%';
+                return ctx.dataset.label + ': R$ ' + ctx.parsed.y.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+              }
+            }
+          }
+        },
         scales: {
-          y: { beginAtZero: true },
-          y1: { position: 'right', grid: { display: false }, ticks: { callback: v => v + '%' } }
+          x: { grid: { display: false }, ticks: { maxRotation: 0 } },
+          y: {
+            position: 'left',
+            ticks: { callback: v => 'R$' + (v >= 1000 ? (v/1000).toFixed(0) + 'k' : v) }
+          },
+          yMargem: {
+            position: 'right', grid: { drawOnChartArea: false },
+            min: 0, max: 100,
+            ticks: { callback: v => v + '%' }
+          }
         }
       }
     });
   }
 
-  const donutCanvas = document.getElementById('donutChart');
-  if (donutCanvas) {
-    new Chart(donutCanvas, {
+  // ==========================================
+  // 4. GRÁFICO 2 — Donut: SINISTRO vs CORRETIVO
+  // ==========================================
+  const donutCtx = document.getElementById('donutChart');
+  if (donutCtx) {
+    const tiposLab  = Object.keys(tiposMap);
+    const tiposVals = Object.values(tiposMap);
+    const cores     = ['#185FA5','#E24B4A','#BA7517','#639922','#6C757D','#9C27B0'];
+
+    new Chart(donutCtx.getContext('2d'), {
       type: 'doughnut',
       data: {
-        labels: ['Corretiva', 'Preventiva', 'Sinistro', 'Outros'],
-        datasets: [{
-          data: [
-            metricas.tiposContador['CORRETIVA'],
-            metricas.tiposContador['PREVENTIVA'],
-            metricas.tiposContador['SINISTRO'],
-            metricas.tiposContador['OUTROS']
-          ],
-          backgroundColor: ['#E24B4A', '#639922', '#185FA5', '#BA7517'],
-          borderWidth: 0
-        }]
+        labels: tiposLab,
+        datasets: [{ data: tiposVals, backgroundColor: cores, borderWidth: 0, hoverOffset: 6 }]
       },
       options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        cutout: '68%',
-        plugins: { legend: { display: false } }
+        responsive: true, maintainAspectRatio: false, cutout: '68%',
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: ctx => ctx.label + ': ' + ctx.parsed + ' registros' } }
+        }
       }
     });
+  }
+
+  // ==========================================
+  // 5. TABELA — OS por mês (realizado vs custo)
+  // ==========================================
+  const tbody = document.getElementById('tableDepartamentosBody');
+  if (tbody) {
+    // Adapta o cabeçalho da tabela para o contexto real
+    const thead = document.querySelector('table.data-table thead tr');
+    if (thead) thead.innerHTML = '<th>Período</th><th>Faturamento</th><th>Custo base</th><th>Resultado</th>';
+
+    tbody.innerHTML = mesesOrd.map(m => {
+      const d   = mesesMap[m];
+      const fat = d.faturar;
+      const cst = d.custo;
+      const mg  = fat > 0 ? ((fat - cst) / fat * 100) : 0;
+      const [y, mo] = m.split('-');
+      const label = new Date(+y, +mo - 1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+      const badge = mg >= 30
+        ? `<span style="color:#639922">↑ ${mg.toFixed(1)}% margem</span>`
+        : mg >= 0
+          ? `<span style="color:#BA7517">→ ${mg.toFixed(1)}% margem</span>`
+          : `<span style="color:#E24B4A">↓ ${mg.toFixed(1)}% margem</span>`;
+      return `<tr>
+        <td style="font-weight:500;text-transform:capitalize">${label}</td>
+        <td>${fmt(fat)}</td>
+        <td>${fmt(cst)}</td>
+        <td>${badge}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  // ==========================================
+  // 6. METAS — Top clientes por faturamento
+  // ==========================================
+  const metaContainer = document.getElementById('metaListContainer');
+  if (metaContainer) {
+    const topClientes = Object.entries(clientesMap)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5);
+
+    const maxVal = topClientes[0]?.[1] || 1;
+
+    // Adapta o título do card
+    const cardTitle = document.querySelector('.bottom-row .card:last-child .card-title');
+    if (cardTitle) cardTitle.textContent = 'Top clientes';
+    const cardSub = document.querySelector('.bottom-row .card:last-child .card-subtitle');
+    if (cardSub) cardSub.textContent = 'Por valor faturado';
+
+    metaContainer.innerHTML = topClientes.map(([nome, val]) => {
+      const pct = Math.round((val / maxVal) * 100);
+      const nomeCurto = nome.length > 28 ? nome.substring(0, 28) + '…' : nome;
+      return `<div class="meta-item">
+        <div class="meta-header">
+          <span class="meta-name" title="${nome}">${nomeCurto}</span>
+          <span class="meta-pct">${fmt(val)}</span>
+        </div>
+        <div class="meta-bar-bg">
+          <div class="meta-bar" style="width:${pct}%;background:#185FA5"></div>
+        </div>
+      </div>`;
+    }).join('');
   }
 });
 
-
 // ==========================================
-// FUNÇÕES GLOBAIS (Fora do evento de load)
+// FUNÇÕES GLOBAIS
 // ==========================================
-
-function processarMetricasDinamicas(dados) {
-  const mesesLabels = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
-  const receitasPorMes = Array(12).fill(0);
-  const custosPorMes = Array(12).fill(0);
-  let totalReceita = 0;
-  let totalCusto = 0;
-  const tiposContador = { 'CORRETIVA': 0, 'PREVENTIVA': 0, 'SINISTRO': 0, 'OUTROS': 0 };
-
-  dados.forEach(item => {
-    if (item.data) {
-      const partes = item.data.split(/[-/]/);
-      if (partes.length >= 2) {
-        const mesItem = parseInt(partes[1]) - 1; 
-        if (mesItem >= 0 && mesItem < 12) {
-          receitasPorMes[mesItem] += (item.receita || 0);
-          custosPorMes[mesItem] += (item.custo || 0);
-        }
-      }
-    }
-    
-    totalReceita += (item.receita || 0);
-    totalCusto += (item.custo || 0);
-
-    const t = item.tipo ? item.tipo.toUpperCase() : '';
-    if (t.includes('CORRETIV')) tiposContador['CORRETIVA'] += (item.receita || 0);
-    else if (t.includes('PREVENTIV')) tiposContador['PREVENTIVA'] += (item.receita || 0);
-    else if (t.includes('SINISTRO')) tiposContador['SINISTRO'] += (item.receita || 0);
-    else tiposContador['OUTROS'] += (item.receita || 0);
-  });
-
-  const margensPorMes = receitasPorMes.map((r, i) => {
-    if (r === 0) return 0;
-    return Math.round(((r - custosPorMes[i]) / r) * 100);
-  });
-
-  return { mesesLabels, receitasPorMes, custosPorMes, margensPorMes, totalReceita, totalCusto, tiposContador };
-}
-
 function updatePeriod(val) {
   const labels = { '1': 'Este mês', '3': 'Últimos 3 meses', '6': 'Últimos 6 meses', '12': 'Último ano' };
-  const topbarPeriod = document.querySelector('.topbar-period');
-  if (topbarPeriod) topbarPeriod.textContent = labels[val] || 'Período selecionado';
+  const el = document.getElementById('topbarPeriod');
+  if (el) el.textContent = labels[val] || 'Período selecionado';
 }
 
 function toggleUserArea() {
-  const btn = document.querySelector('.user-btn');
+  const btn      = document.querySelector('.user-btn');
   const dropdown = document.getElementById('userDropdown');
   if (btn && dropdown) {
     btn.classList.toggle('active');
@@ -179,21 +277,11 @@ function toggleUserArea() {
 }
 
 function limparDados() {
-  if (confirm("Deseja mesmo limpar as informações atuais? Será necessário importar um novo arquivo de planilha.")) {
+  if (confirm('Apagar os dados importados? Será necessário importar uma nova planilha.')) {
     localStorage.removeItem('findash_real_data');
+    localStorage.removeItem('findash_meta');
     window.location.reload();
   }
 }
 
-function exportPDF() {
-  const btn = event ? event.target.closest('button') : null;
-  if (btn) {
-    btn.textContent = '✓ Pronto para impressão';
-    btn.style.background = 'var(--green-500)';
-    setTimeout(() => {
-      btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Exportar PDF`;
-      btn.style.background = '';
-    }, 2000);
-  }
-  window.print();
-}
+function exportPDF() { window.print(); }
