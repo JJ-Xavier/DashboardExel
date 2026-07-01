@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kapo Analytics | Importar Planilha</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body class="entry-body">
+
+    <div class="entry-wrap">
+        <div class="entry-card">
+            <div class="brand">
+                <div class="brand-mark">K</div>
+                <span class="brand-name">Kapo <strong>Analytics</strong></span>
+            </div>
+
+            <h1>Importe sua planilha</h1>
+            <p class="subtitle">Envie um arquivo .xlsx, .xls ou .csv. O sistema detecta automaticamente abas, colunas e indicadores.</p>
+
+            <div id="dropZone" class="drop-zone">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none">
+                    <path d="M12 16V4M12 4L7 9M12 4l5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <p>Arraste o arquivo aqui ou <span class="link">clique para selecionar</span></p>
+                <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" hidden>
+            </div>
+
+            <div id="errorBox" class="error-box" style="display:none;"></div>
+
+            <div id="progressWrap" class="progress-wrap" style="display:none;">
+                <div class="progress-track"><div id="progressBar" class="progress-bar"></div></div>
+                <span id="progressLabel" class="progress-label">Processando...</span>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/utils.js"></script>
+    <script src="js/analyzer.js"></script>
+    <script src="js/statistics.js"></script>
+    <script src="js/indexer.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="js/excelEngine.js"></script>
+    <script src="js/database.js"></script>
+    <script src="js/entrada.js"></script>
+</body>
+</html>

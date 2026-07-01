@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kapo Analytics | Dashboard</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body class="dashboard-body">
+
+    <div id="emptyState" class="empty-state" style="display:none;">
+        <div class="empty-card">
+            <h2>Nenhum dado carregado</h2>
+            <p>Importe uma planilha para visualizar o dashboard.</p>
+            <a href="index.html" class="btn-primary">Importar planilha</a>
+        </div>
+    </div>
+
+    <div id="app">
+        <header class="topbar">
+            <div class="brand">
+                <div class="brand-mark">K</div>
+                <span class="brand-name">Kapo <strong>Analytics</strong></span>
+            </div>
+
+            <div class="topbar-controls">
+                <select id="sheetSelect" class="sheet-select"></select>
+                <input type="text" id="searchInput" class="search-input" placeholder="Buscar em todos os campos...">
+                <a href="index.html" class="btn-secondary">Nova importação</a>
+            </div>
+        </header>
+
+        <main class="main-grid">
+
+            <section class="filters-section">
+                <div class="filters-header">
+                    <span>Filtros</span>
+                    <button id="clearFiltersBtn" class="btn-link">Limpar</button>
+                </div>
+                <div id="filtersRow" class="filters-row"></div>
+            </section>
+
+            <section id="kpiRow" class="kpi-row"></section>
+
+            <section id="chartsGrid" class="charts-grid"></section>
+
+            <section class="table-section">
+                <div class="table-header">
+                    <h3>Detalhamento</h3>
+                    <span id="rowCountLabel" class="row-count"></span>
+                </div>
+                <div class="table-scroll">
+                    <table id="dataTable"></table>
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+    <script src="js/utils.js"></script>
+    <script src="js/analyzer.js"></script>
+    <script src="js/statistics.js"></script>
+    <script src="js/indexer.js"></script>
+    <script src="js/database.js"></script>
+    <script src="js/filters.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+    <script src="js/charts.js"></script>
+    <script src="js/dashboard.js"></script>
+</body>
+</html>
