@@ -8,9 +8,9 @@
 const Charts = (() => {
 
     const PALETTE = [
-        "#0E7C66", "#13A085", "#1FBF9F", "#5FD8C2",
-        "#0B5A4B", "#F2A93B", "#E2574C", "#3B7DD8",
-        "#8D6FE0", "#2EA0A0"
+        "#4F7CFF", "#8B6CF2", "#36C7E0", "#2ED9A3",
+        "#F2A93B", "#F25C5C", "#5FA8FF", "#C792EA",
+        "#5FE0C7", "#FFD166"
     ];
 
     const instances = new Map();
@@ -27,8 +27,8 @@ const Charts = (() => {
             responsive: true,
             maintainAspectRatio: false,
             plugins: {
-                legend: { labels: { font: { family: "Inter, sans-serif" }, color: "#3a3f47" } },
-                tooltip: { backgroundColor: "#1f2329", padding: 10, cornerRadius: 8 }
+                legend: { labels: { font: { family: "Inter, sans-serif" }, color: "#8B96B3" } },
+                tooltip: { backgroundColor: "#0B1220", padding: 10, cornerRadius: 8, borderColor: "#232E4A", borderWidth: 1 }
             }
         }, extra);
     }
@@ -52,8 +52,8 @@ const Charts = (() => {
             },
             options: baseOptions({
                 scales: {
-                    y: { beginAtZero: true, grid: { color: "#eef0f2" } },
-                    x: { grid: { display: false } }
+                    y: { beginAtZero: true, grid: { color: "#1B2540" }, ticks: { color: "#5C6786" } },
+                    x: { grid: { display: false }, ticks: { color: "#5C6786" } }
                 },
                 plugins: { legend: { display: false } }
             })
@@ -75,8 +75,8 @@ const Charts = (() => {
                 datasets: [{
                     label,
                     data: values,
-                    borderColor: PALETTE[1],
-                    backgroundColor: "rgba(19,160,133,0.12)",
+                    borderColor: PALETTE[0],
+                    backgroundColor: "rgba(79,124,255,0.14)",
                     tension: 0.35,
                     fill: true,
                     pointRadius: 3
@@ -84,8 +84,8 @@ const Charts = (() => {
             },
             options: baseOptions({
                 scales: {
-                    y: { beginAtZero: true, grid: { color: "#eef0f2" } },
-                    x: { grid: { display: false } }
+                    y: { beginAtZero: true, grid: { color: "#1B2540" }, ticks: { color: "#5C6786" } },
+                    x: { grid: { display: false }, ticks: { color: "#5C6786" } }
                 },
                 plugins: { legend: { display: false } }
             })
@@ -115,8 +115,8 @@ const Charts = (() => {
             },
             options: baseOptions({
                 scales: {
-                    y: { beginAtZero: true, grid: { color: "#eef0f2" } },
-                    x: { grid: { display: false } }
+                    y: { beginAtZero: true, grid: { color: "#1B2540" }, ticks: { color: "#5C6786" } },
+                    x: { grid: { display: false }, ticks: { color: "#5C6786" } }
                 }
             })
         });
@@ -138,7 +138,7 @@ const Charts = (() => {
                     data: values,
                     backgroundColor: labels.map((_, i) => PALETTE[i % PALETTE.length]),
                     borderWidth: 2,
-                    borderColor: "#ffffff"
+                    borderColor: "#161F35"
                 }]
             },
             options: baseOptions({
@@ -170,8 +170,8 @@ const Charts = (() => {
             options: baseOptions({
                 indexAxis: "y",
                 scales: {
-                    x: { beginAtZero: true, grid: { color: "#eef0f2" } },
-                    y: { grid: { display: false } }
+                    x: { beginAtZero: true, grid: { color: "#1B2540" }, ticks: { color: "#5C6786" } },
+                    y: { grid: { display: false }, ticks: { color: "#5C6786" } }
                 },
                 plugins: { legend: { display: false } }
             })

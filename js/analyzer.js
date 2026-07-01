@@ -73,12 +73,6 @@ const Analyzer = (() => {
     /*==================== TESTADORES DE CONTEÚDO ====================*/
 
     const TESTERS = {
-        money: v => {
-            const n = Utils.parseNumberSmart(v);
-            if (n === null) return false;
-            // strings que parecem moeda OU número decimal "normal"
-            return /[r$]\$?|,\d{2}\b/i.test(String(v)) || (typeof v === "number");
-        },
         date: v => Utils.parseDateSmart(v) !== null && /\d/.test(String(v)),
         document_cpf: v => /^\d{3}\.?\d{3}\.?\d{3}-?\d{2}$/.test(String(v).replace(/\s/g, "")),
         document_cnpj: v => /^\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}$/.test(String(v).replace(/\s/g, "")),
@@ -90,6 +84,29 @@ const Analyzer = (() => {
         serviceOrder: v => /^(OS)?[\-\s]?\d{2,10}$/i.test(String(v).trim()),
         number: v => Utils.parseNumberSmart(v) !== null
     };
+
+    /**
+     * Testador RÍGIDO para valores monetários: a célula inteira (após
+     * remover símbolo de moeda e espaços) precisa ser um número puro.
+     * `parseNumberSmart` sozinho é permissivo demais para uso como
+     * testador de conteúdo — ele extrai dígitos de QUALQUER string,
+     * então um texto descritivo como "MOTOCICLETA ... 0149 CC" também
+     * "parseava" como número e contaminava colunas de texto/categóricas
+     * com o papel de custo. Este testador exige que a célula, do início
+     * ao fim, pareça um valor numérico/monetário — nunca um trecho
+     * embutido em texto livre.
+     */
+    const STRICT_MONEY_PATTERN =
+        /^-?\s*r?\$?\s*-?\s*\d{1,3}(\.\d{3})*(,\d{1,2})?$|^-?\s*r?\$?\s*-?\s*\d+([.,]\d{1,2})?$/i;
+
+    function strictMoneyTester(v) {
+        if (typeof v === "number") return isFinite(v);
+        const s = String(v).trim();
+        if (s === "-" || s === "—" || s === "") return true; // célula "vazia" representando zero
+        return STRICT_MONEY_PATTERN.test(s);
+    }
+
+    TESTERS.money = strictMoneyTester;
 
     // serviceCost e partsCost têm conteúdo igual a money (são valores
     // monetários); o que os diferencia é o NOME da coluna, então
@@ -121,8 +138,19 @@ const Analyzer = (() => {
         text: 0.1
     };
 
+    const MONEY_ROLES = new Set(["money", "serviceCost", "partsCost"]);
+
     /**
      * Pontua o quanto uma coluna (nome + amostra) combina com um papel.
+     *
+     * Para papéis monetários, aplica dois ajustes importantes em
+     * planilhas com colunas "componentes" (comum em bases financeiras):
+     *   - Bônus para nomes com "total" (valor final, já consolidado).
+     *   - Penalidade para nomes com "taxa" sem "total" (é o COMPONENTE
+     *     de imposto/taxa, não o valor final — ex: "VALOR TAXA PEÇAS"
+     *     não deve competir com "PEÇAS TOTAL" pelo papel partsCost).
+     * Isso evita que colunas de imposto/subtotal empatem com a coluna
+     * de total real e sejam escolhidas por sorte de ordem de coluna.
      */
     function scoreColumnForRole(colName, samples, role) {
         const nameNorm = Utils.normalizeText(colName);
@@ -135,6 +163,50 @@ const Analyzer = (() => {
             if (s > nameScore) nameScore = s;
             // bônus se o nome inteiro contém o sinônimo como substring
             if (syn && nameNorm.includes(syn)) nameScore = Math.max(nameScore, 0.9);
+        }
+
+        // O papel "percentage" tem "taxa" como sinônimo (para pegar colunas
+        // de alíquota, ex: "TAXA" = 30%). Porém "taxa" também aparece em
+        // nomes de colunas monetárias que representam o IMPOSTO EM R$, não
+        // a alíquota em si (ex: "M.O SEM TAXA", "VALOR TAXA M.O"). Nomes
+        // com "valor" ou "sem" combinados com "taxa" indicam claramente um
+        // valor monetário, não uma taxa percentual — penaliza fortemente
+        // para essas colunas não roubarem o papel de colunas de custo.
+        if (role === "percentage") {
+            const looksMonetary = /\bvalor\b/.test(nameNorm) || /\bsem\b/.test(nameNorm);
+            if (looksMonetary) nameScore = Math.max(0, nameScore - 0.7);
+        }
+
+        if (MONEY_ROLES.has(role)) {
+            // abreviação comum em oficinas: "M.O" = Mão de Obra.
+            // Detectado por TOKEN exato (não substring), para não
+            // confundir com palavras como "MODELO" (que também contém "mo").
+            // Aplicado ANTES dos modificadores de total/taxa abaixo, para
+            // servir apenas como sinal de "família" (é uma coluna de M.O.)
+            // sem apagar a diferenciação entre a variante total, a variante
+            // sem-taxa e a variante de imposto dessa mesma família.
+            if (role === "serviceCost") {
+                const tokens = nameNorm.split(" ");
+                const hasMOToken = tokens.includes("mo") ||
+                    tokens.some((t, i) => t === "m" && tokens[i + 1] === "o");
+                if (hasMOToken) nameScore = Math.max(nameScore, 0.65);
+            }
+
+            const hasTotal = /\btotal\b/.test(nameNorm);
+            const hasTaxa = /\btaxa\b/.test(nameNorm);
+
+            if (hasTotal) nameScore = Math.min(1, nameScore + 0.15);
+            if (hasTaxa && !hasTotal) nameScore = Math.max(0, nameScore - 0.35);
+        }
+
+        // serviceCost e partsCost são papéis MUITO específicos (custo de
+        // mão de obra / custo de peças). Não é razoável atribuí-los a uma
+        // coluna só porque o CONTEÚDO parece numérico — isso faria colunas
+        // genéricas como "KM" (odômetro) ou qualquer número sem relação
+        // vencer esse papel por acidente. Exige um mínimo de evidência de
+        // NOME antes de permitir que o conteúdo decida.
+        if ((role === "serviceCost" || role === "partsCost") && nameScore < 0.15) {
+            return { role, nameScore, contentScore: 0, combined: 0 };
         }
 
         // sinal 2: conteúdo
@@ -155,7 +227,16 @@ const Analyzer = (() => {
             ? (nameScore * 0.35 + contentScore * 0.65) * (0.5 + 0.5 * specificity)
             : nameScore * (0.5 + 0.5 * specificity);
 
-        return { role, nameScore, contentScore, combined };
+        // Desempate: "VALOR A FATURAR" é semanticamente o total final da
+        // fatura (mais autoritativo que qualquer outra coluna chamada só
+        // de "TOTAL"). Aplicado como incremento pequeno e NÃO limitado
+        // pelo cap de nameScore, para garantir que sempre vença empates
+        // exatos contra colunas concorrentes do papel "money".
+        const finalCombined = (role === "money" && /faturar/.test(nameNorm))
+            ? combined + 0.02
+            : combined;
+
+        return { role, nameScore, contentScore, combined: finalCombined };
     }
 
     /**
