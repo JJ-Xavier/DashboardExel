@@ -66,6 +66,12 @@ const Analyzer = (() => {
         id: ["id", "codigo", "código", "cod", "identificador", "chave", "sequencial"],
         serviceOrder: ["os", "ordem de servico", "ordem de serviço", "numero os", "nr os", "n os"],
         status: ["status", "situacao", "situação", "estado", "fase"],
+        maintenanceType: [
+            "tipo de manutencao", "tipo de manutenção", "tipo de os", "tipo os",
+            "tipo de o.s", "categoria de servico", "categoria de serviço",
+            "natureza do atendimento", "natureza atendimento", "classificacao da os",
+            "classificação da os", "tipo de atendimento", "tipo atendimento"
+        ],
         modelName: ["modelo", "veiculo", "veículo", "marca modelo", "descricao item", "descrição item"],
         text: []
     };
@@ -80,9 +86,25 @@ const Analyzer = (() => {
         phone: v => /^(\+?55)?\s?\(?\d{2}\)?\s?\d{4,5}-?\d{4}$/.test(String(v).replace(/\s/g, "")),
         email: v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v).trim()),
         percentage: v => /%\s*$/.test(String(v).trim()) || (typeof v === "number" && v >= 0 && v <= 1),
+        // "id" é um papel MUITO genérico via conteúdo (qualquer texto
+        // alfanumérico curto bate). Sem essa restrição de comprimento e
+        // sem exigir evidência de nome (ver guarda mais abaixo), colunas
+        // categóricas como "TIPO DE MANUTENÇÃO" (valores: CORRETIVA,
+        // PREVENTIVA...) acabavam classificadas como "id" por acidente.
         id: v => /^[A-Za-z0-9\-_.]{1,20}$/.test(String(v).trim()) && String(v).trim() !== "",
         serviceOrder: v => /^(OS)?[\-\s]?\d{2,10}$/i.test(String(v).trim()),
-        number: v => Utils.parseNumberSmart(v) !== null
+        number: v => Utils.parseNumberSmart(v) !== null,
+        // Vocabulário de domínio (oficina/frota): reconhece o CONTEÚDO
+        // típico de uma coluna de tipo de manutenção/O.S, independente
+        // do nome da coluna usado na planilha.
+        maintenanceType: v => {
+            const s = Utils.normalizeText(v);
+            return [
+                "corretiva", "preventiva", "sinistro", "preditiva", "revisao",
+                "emergencial", "garantia", "recall", "instalacao", "corretivo",
+                "preventivo", "manutencao programada", "revisao programada"
+            ].includes(s);
+        }
     };
 
     /**
@@ -135,6 +157,7 @@ const Analyzer = (() => {
         entityName: 0.5,
         modelName: 0.5,
         status: 0.5,
+        maintenanceType: 0.6,
         text: 0.1
     };
 
@@ -199,13 +222,15 @@ const Analyzer = (() => {
             if (hasTaxa && !hasTotal) nameScore = Math.max(0, nameScore - 0.35);
         }
 
-        // serviceCost e partsCost são papéis MUITO específicos (custo de
-        // mão de obra / custo de peças). Não é razoável atribuí-los a uma
-        // coluna só porque o CONTEÚDO parece numérico — isso faria colunas
-        // genéricas como "KM" (odômetro) ou qualquer número sem relação
-        // vencer esse papel por acidente. Exige um mínimo de evidência de
-        // NOME antes de permitir que o conteúdo decida.
-        if ((role === "serviceCost" || role === "partsCost") && nameScore < 0.15) {
+        // serviceCost, partsCost e id são papéis MUITO específicos (custo
+        // de mão de obra / custo de peças / identificador). Não é
+        // razoável atribuí-los a uma coluna só porque o CONTEÚDO parece
+        // compatível — isso faria colunas genéricas como "KM" (odômetro)
+        // ou qualquer texto curto (ex: "CORRETIVA") vencer esse papel por
+        // acidente, já que o testador de "id" aceita qualquer alfanumérico
+        // curto. Exige um mínimo de evidência de NOME antes de permitir
+        // que o conteúdo decida sozinho.
+        if ((role === "serviceCost" || role === "partsCost" || role === "id") && nameScore < 0.15) {
             return { role, nameScore, contentScore: 0, combined: 0 };
         }
 

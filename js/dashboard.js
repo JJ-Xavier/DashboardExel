@@ -20,11 +20,17 @@
         dataTable: document.getElementById("dataTable"),
         rowCountLabel: document.getElementById("rowCountLabel"),
         emptyState: document.getElementById("emptyState"),
-        clearFiltersBtn: document.getElementById("clearFiltersBtn")
+        clearFiltersBtn: document.getElementById("clearFiltersBtn"),
+        dashboardView: document.getElementById("dashboardView"),
+        reportsView: document.getElementById("reportsView"),
+        reportsContainer: document.getElementById("reportsContainer"),
+        topbarTitle: document.getElementById("topbarTitle"),
+        sidebarLinks: document.querySelectorAll(".sidebar-link[data-view]")
     };
 
     let db = null;
     let currentSheet = null;
+    let currentView = "dashboard";
 
     async function boot() {
         db = await Database.loadFromStorage();
@@ -36,7 +42,7 @@
         }
 
         populateSheetSelector();
-        loadSheet(db.getSheets()[0]);
+        loadSheet(pickDefaultSheet());
 
         els.sheetSelect && els.sheetSelect.addEventListener("change", e => {
             Filters.clearAll();
@@ -56,6 +62,29 @@
         });
 
         Filters.onChange(() => render());
+
+        els.sidebarLinks.forEach(link => {
+            link.addEventListener("click", e => {
+                e.preventDefault();
+                switchView(link.dataset.view);
+            });
+        });
+    }
+
+    /*==================== TROCA DE VIEW (Dashboard / Relatórios) ====================*/
+
+    function switchView(view) {
+        currentView = view;
+
+        els.sidebarLinks.forEach(link => {
+            link.classList.toggle("active", link.dataset.view === view);
+        });
+
+        if (els.dashboardView) els.dashboardView.style.display = view === "dashboard" ? "flex" : "none";
+        if (els.reportsView) els.reportsView.style.display = view === "reports" ? "flex" : "none";
+        if (els.topbarTitle) els.topbarTitle.textContent = view === "reports" ? "Relatórios" : "Dashboard";
+
+        if (view === "reports") renderReports();
     }
 
     function populateSheetSelector() {
@@ -63,12 +92,27 @@
         els.sheetSelect.innerHTML = db.getSheets()
             .map(name => `<option value="${name}">${name}</option>`)
             .join("");
+        els.sheetSelect.value = pickDefaultSheet();
+    }
+
+    /**
+     * Evita abrir por padrão uma aba "legada"/histórica (comum em bases
+     * financeiras que mantêm uma planilha antiga junto da atual). Prefere
+     * a primeira aba cujo nome não sinalize isso; se todas sinalizarem,
+     * cai de volta para a primeira aba mesmo assim.
+     */
+    function pickDefaultSheet() {
+        const names = db.getSheets();
+        const legacyPattern = /antiga?|legad|legacy|hist[oó]ric/i;
+        const preferred = names.find(n => !legacyPattern.test(n));
+        return preferred || names[0];
     }
 
     function loadSheet(name) {
         currentSheet = db.sheet(name);
         renderFilterControls();
         render();
+        if (currentView === "reports") renderReports();
     }
 
     /*==================== FILTROS AUTOMÁTICOS ====================*/
@@ -158,6 +202,17 @@
             value: Utils.formatNumber(rows.length)
         });
 
+        if (moneyCol) {
+            cards.push({
+                label: "Faturamento Total",
+                value: Utils.formatMoney(Statistics.sum(rows, moneyCol))
+            });
+            cards.push({
+                label: "Ticket Médio por O.S",
+                value: Utils.formatMoney(Statistics.average(rows, moneyCol))
+            });
+        }
+
         if (serviceCostCol) {
             cards.push({
                 label: "Custo de Serviço (Total)",
@@ -178,19 +233,8 @@
             const totalSP = sService + sParts;
             const pctService = totalSP ? (sService / totalSP) * 100 : 0;
             cards.push({
-                label: "% Serviço sobre o Total (Serviço+Peças)",
+                label: "% Serviço sobre Serviço+Peças",
                 value: `${Utils.formatNumber(pctService, 1)}%`
-            });
-        }
-
-        if (moneyCol && !serviceCostCol && !partsCostCol) {
-            cards.push({
-                label: prettify(moneyCol) + " (Total)",
-                value: Utils.formatMoney(Statistics.sum(rows, moneyCol))
-            });
-            cards.push({
-                label: prettify(moneyCol) + " (Média)",
-                value: Utils.formatMoney(Statistics.average(rows, moneyCol))
             });
         }
 
@@ -232,17 +276,33 @@
         // limpa
         els.chartsGrid.innerHTML = "";
 
-        const statusCol = currentSheet.resolveColumn("status");
         const moneyCol = currentSheet.resolveColumn("money");
         const serviceCostCol = currentSheet.resolveColumn("serviceCost");
         const partsCostCol = currentSheet.resolveColumn("partsCost");
         const dateCol = currentSheet.resolveColumn("date");
         const entityCol = currentSheet.resolveColumn("entityName") || currentSheet.resolveColumn("modelName");
+        const maintenanceCol = currentSheet.resolveColumn("maintenanceType");
+        const statusCol = currentSheet.resolveColumn("status");
 
         let chartCount = 0;
 
+        // 1) FATURAMENTO MENSAL — prioridade máxima, gráfico largo no topo.
+        if (moneyCol && dateCol) {
+            addChartCanvas("chartMonthlyRevenue", "Faturamento Total (Evolução Mensal)", { wide: true });
+            const trend = groupByMonth(rows, dateCol, moneyCol);
+            requestAnimationFrame(() =>
+                Charts.line("chartMonthlyRevenue", {
+                    label: "Faturamento",
+                    labels: trend.map(t => t.label),
+                    values: trend.map(t => t.value)
+                })
+            );
+            chartCount++;
+        }
+
+        // 2) SERVIÇO x PEÇAS — proporção total + evolução mensal comparada.
         if (serviceCostCol && partsCostCol) {
-            addChartCanvas("chartServicePartsSplit", "Custo de Serviço x Peças (Total)");
+            addChartCanvas("chartServicePartsSplit", "Custo de Serviço x Peças (Proporção)");
             const sService = Statistics.sum(rows, serviceCostCol);
             const sParts = Statistics.sum(rows, partsCostCol);
             requestAnimationFrame(() =>
@@ -254,7 +314,7 @@
             chartCount++;
 
             if (dateCol) {
-                addChartCanvas("chartServicePartsTrend", "Evolução: Serviço x Peças no Tempo");
+                addChartCanvas("chartServicePartsTrend", "Serviço x Peças — Evolução Mensal", { wide: true });
                 const trendService = groupByMonth(rows, dateCol, serviceCostCol);
                 const trendParts = groupByMonth(rows, dateCol, partsCostCol);
                 const allLabels = [...new Set([...trendService.map(t => t.label), ...trendParts.map(t => t.label)])].sort();
@@ -273,11 +333,22 @@
             }
         }
 
-        if (statusCol) {
-            addChartCanvas("chartStatus", "Distribuição por Status");
-            const dist = Statistics.distribution(rows, statusCol, 8);
+        // 3) TIPO DE MANUTENÇÃO — faturamento por Corretiva/Preventiva/Sinistro.
+        if (maintenanceCol && moneyCol) {
+            addChartCanvas("chartMaintenanceType", "Faturamento por Tipo de Manutenção");
+            const grouped = groupSum(rows, maintenanceCol, moneyCol);
             requestAnimationFrame(() =>
-                Charts.donut("chartStatus", {
+                Charts.donut("chartMaintenanceType", {
+                    labels: grouped.map(g => String(g.key)),
+                    values: grouped.map(g => g.value)
+                })
+            );
+            chartCount++;
+        } else if (maintenanceCol) {
+            addChartCanvas("chartMaintenanceType", "Distribuição por Tipo de Manutenção");
+            const dist = Statistics.distribution(rows, maintenanceCol, 8);
+            requestAnimationFrame(() =>
+                Charts.donut("chartMaintenanceType", {
                     labels: dist.map(d => String(d.label)),
                     values: dist.map(d => d.value)
                 })
@@ -285,12 +356,13 @@
             chartCount++;
         }
 
+        // 4) RANKING DE CLIENTES/FROTAS — quem mais fatura.
         if (moneyCol && entityCol) {
-            addChartCanvas("chartTopEntities", `Top 10 por ${prettify(entityCol)}`);
+            addChartCanvas("chartTopEntities", `Top 10 ${prettify(entityCol)} por Faturamento`);
             const grouped = groupSum(rows, entityCol, moneyCol).slice(0, 10);
             requestAnimationFrame(() =>
                 Charts.horizontalBar("chartTopEntities", {
-                    label: prettify(moneyCol),
+                    label: "Faturamento",
                     labels: grouped.map(g => String(g.key)),
                     values: grouped.map(g => g.value)
                 })
@@ -298,14 +370,14 @@
             chartCount++;
         }
 
-        if (moneyCol && dateCol) {
-            addChartCanvas("chartTrend", `Evolução de ${prettify(moneyCol)} no Tempo`);
-            const trend = groupByMonth(rows, dateCol, moneyCol);
+        // Extra: status, só se ainda houver espaço relevante e a coluna existir.
+        if (statusCol) {
+            addChartCanvas("chartStatus", "Distribuição por Status");
+            const dist = Statistics.distribution(rows, statusCol, 8);
             requestAnimationFrame(() =>
-                Charts.line("chartTrend", {
-                    label: prettify(moneyCol),
-                    labels: trend.map(t => t.label),
-                    values: trend.map(t => t.value)
+                Charts.donut("chartStatus", {
+                    labels: dist.map(d => String(d.label)),
+                    values: dist.map(d => d.value)
                 })
             );
             chartCount++;
@@ -326,9 +398,9 @@
         }
     }
 
-    function addChartCanvas(id, title) {
+    function addChartCanvas(id, title, opts = {}) {
         const card = document.createElement("div");
-        card.className = "chart-card";
+        card.className = opts.wide ? "chart-card chart-card-wide" : "chart-card";
         card.innerHTML = `<h3>${title}</h3><div class="chart-wrap"><canvas id="${id}"></canvas></div>`;
         els.chartsGrid.appendChild(card);
     }
@@ -390,6 +462,229 @@
         if (value instanceof Date) return Utils.formatDate(value);
 
         return escapeHtml(String(value));
+    }
+
+    /*==================== RELATÓRIOS AUTOMÁTICOS ====================*/
+
+    /**
+     * Gera relatórios de negócio automaticamente a partir dos PAPÉIS
+     * SEMÂNTICOS disponíveis na aba atual (nunca por nome fixo de
+     * coluna). Cada relatório só aparece se os dados necessários
+     * existirem na planilha selecionada.
+     */
+    function renderReports() {
+        if (!els.reportsContainer || !currentSheet) return;
+
+        const rows = currentSheet.getRows(); // relatório reflete a base completa, não os filtros do Dashboard
+        const moneyCol = currentSheet.resolveColumn("money");
+        const serviceCostCol = currentSheet.resolveColumn("serviceCost");
+        const partsCostCol = currentSheet.resolveColumn("partsCost");
+        const dateCol = currentSheet.resolveColumn("date");
+        const entityCol = currentSheet.resolveColumn("entityName");
+        const maintenanceCol = currentSheet.resolveColumn("maintenanceType");
+        const statusCol = currentSheet.resolveColumn("status");
+        const serviceOrderCol = currentSheet.resolveColumn("serviceOrder");
+
+        els.reportsContainer.innerHTML = "";
+
+        let reportCount = 0;
+
+        // 1) Resumo Mensal
+        if (dateCol && moneyCol) {
+            const monthly = groupByMonth(rows, dateCol, moneyCol);
+            const monthlyService = serviceCostCol ? new Map(groupByMonth(rows, dateCol, serviceCostCol).map(r => [r.label, r.value])) : null;
+            const monthlyParts = partsCostCol ? new Map(groupByMonth(rows, dateCol, partsCostCol).map(r => [r.label, r.value])) : null;
+
+            const headers = ["Mês", "Faturamento"];
+            if (monthlyService) headers.push("Custo Serviço");
+            if (monthlyParts) headers.push("Custo Peças");
+
+            const tableRows = monthly.map(m => {
+                const r = [formatMonthLabel(m.label), Utils.formatMoney(m.value)];
+                if (monthlyService) r.push(Utils.formatMoney(monthlyService.get(m.label) || 0));
+                if (monthlyParts) r.push(Utils.formatMoney(monthlyParts.get(m.label) || 0));
+                return r;
+            });
+
+            const csvRows = monthly.map(m => {
+                const r = [formatMonthLabel(m.label), m.value.toFixed(2)];
+                if (monthlyService) r.push((monthlyService.get(m.label) || 0).toFixed(2));
+                if (monthlyParts) r.push((monthlyParts.get(m.label) || 0).toFixed(2));
+                return r;
+            });
+
+            addReportCard("Resumo Mensal de Faturamento", headers, tableRows, csvRows, "resumo_mensal");
+            reportCount++;
+        }
+
+        // 2) Resumo por Cliente/Frota
+        if (entityCol && moneyCol) {
+            const grouped = groupSum(rows, entityCol, moneyCol);
+            const osCountMap = serviceOrderCol ? countByKey(rows, entityCol, serviceOrderCol) : null;
+
+            const headers = [prettify(entityCol), "Faturamento Total"];
+            if (osCountMap) headers.push("Qtd. O.S", "Ticket Médio");
+
+            const tableRows = grouped.map(g => {
+                const r = [String(g.key), Utils.formatMoney(g.value)];
+                if (osCountMap) {
+                    const count = osCountMap.get(g.key) || 0;
+                    r.push(Utils.formatNumber(count), Utils.formatMoney(count ? g.value / count : 0));
+                }
+                return r;
+            });
+
+            const csvRows = grouped.map(g => {
+                const r = [String(g.key), g.value.toFixed(2)];
+                if (osCountMap) {
+                    const count = osCountMap.get(g.key) || 0;
+                    r.push(String(count), (count ? g.value / count : 0).toFixed(2));
+                }
+                return r;
+            });
+
+            addReportCard(`Resumo por ${prettify(entityCol)}`, headers, tableRows, csvRows, "resumo_clientes");
+            reportCount++;
+        }
+
+        // 3) Resumo por Tipo de Manutenção
+        if (maintenanceCol && moneyCol) {
+            const grouped = groupSum(rows, maintenanceCol, moneyCol);
+            const total = grouped.reduce((acc, g) => acc + g.value, 0);
+
+            const headers = ["Tipo de Manutenção", "Faturamento", "% do Total", "Qtd. Registros"];
+            const countMap = countSimple(rows, maintenanceCol);
+
+            const tableRows = grouped.map(g => [
+                String(g.key),
+                Utils.formatMoney(g.value),
+                `${Utils.formatNumber(total ? (g.value / total) * 100 : 0, 1)}%`,
+                Utils.formatNumber(countMap.get(g.key) || 0)
+            ]);
+
+            const csvRows = grouped.map(g => [
+                String(g.key),
+                g.value.toFixed(2),
+                (total ? (g.value / total) * 100 : 0).toFixed(1),
+                String(countMap.get(g.key) || 0)
+            ]);
+
+            addReportCard("Resumo por Tipo de Manutenção", headers, tableRows, csvRows, "resumo_tipo_manutencao");
+            reportCount++;
+        }
+
+        // 4) Resumo por Status
+        if (statusCol) {
+            const countMap = countSimple(rows, statusCol);
+            const moneyByStatus = moneyCol ? groupSum(rows, statusCol, moneyCol) : null;
+            const moneyMap = moneyByStatus ? new Map(moneyByStatus.map(g => [g.key, g.value])) : null;
+
+            const headers = ["Status", "Qtd. Registros"];
+            if (moneyMap) headers.push("Faturamento");
+
+            const keys = [...countMap.keys()];
+            const tableRows = keys.map(k => {
+                const r = [String(k), Utils.formatNumber(countMap.get(k) || 0)];
+                if (moneyMap) r.push(Utils.formatMoney(moneyMap.get(k) || 0));
+                return r;
+            });
+
+            const csvRows = keys.map(k => {
+                const r = [String(k), String(countMap.get(k) || 0)];
+                if (moneyMap) r.push((moneyMap.get(k) || 0).toFixed(2));
+                return r;
+            });
+
+            addReportCard("Resumo por Status", headers, tableRows, csvRows, "resumo_status");
+            reportCount++;
+        }
+
+        if (!reportCount) {
+            els.reportsContainer.innerHTML =
+                '<div class="empty-card" style="margin:0 auto;">' +
+                '<h2>Sem dados suficientes</h2>' +
+                '<p>Não encontramos colunas de valor, data ou cliente nesta aba para gerar relatórios automáticos.</p>' +
+                '</div>';
+        }
+    }
+
+    function addReportCard(title, headers, tableRows, csvRows, filenamePrefix) {
+        const card = document.createElement("section");
+        card.className = "table-section";
+
+        const thead = `<thead><tr>${headers.map(h => `<th>${escapeHtml(h)}</th>`).join("")}</tr></thead>`;
+        const tbody = `<tbody>${tableRows.map(r => `<tr>${r.map(c => `<td>${escapeHtml(String(c))}</td>`).join("")}</tr>`).join("")}</tbody>`;
+
+        card.innerHTML = `
+            <div class="table-header">
+                <h3>${escapeHtml(title)}</h3>
+                <button class="btn-secondary btn-export">Exportar CSV</button>
+            </div>
+            <div class="table-scroll">
+                <table>${thead}${tbody}</table>
+            </div>
+        `;
+
+        card.querySelector(".btn-export").addEventListener("click", () => {
+            exportCSV(`${filenamePrefix}.csv`, headers, csvRows);
+        });
+
+        els.reportsContainer.appendChild(card);
+    }
+
+    function countByKey(rows, groupCol, countCol) {
+        const map = new Map();
+        rows.forEach(r => {
+            const k = r[groupCol] ?? "(vazio)";
+            if (r[countCol] === null || r[countCol] === undefined || r[countCol] === "") return;
+            map.set(k, (map.get(k) || 0) + 1);
+        });
+        return map;
+    }
+
+    function countSimple(rows, col) {
+        const map = new Map();
+        rows.forEach(r => {
+            const k = r[col] ?? "(vazio)";
+            map.set(k, (map.get(k) || 0) + 1);
+        });
+        return map;
+    }
+
+    function formatMonthLabel(label) {
+        // label vem como "2026-01" -> "Jan/2026"
+        const [year, month] = label.split("-");
+        const meses = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+        const idx = parseInt(month, 10) - 1;
+        return meses[idx] ? `${meses[idx]}/${year}` : label;
+    }
+
+    /**
+     * Gera e baixa um arquivo CSV a partir de cabeçalhos e linhas.
+     * Usa BOM UTF-8 para o Excel abrir acentos corretamente.
+     */
+    function exportCSV(filename, headers, rows) {
+        const escapeCSV = v => {
+            const s = String(v ?? "");
+            return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+        };
+
+        const lines = [
+            headers.map(escapeCSV).join(";"),
+            ...rows.map(r => r.map(escapeCSV).join(";"))
+        ];
+
+        const csvContent = "\uFEFF" + lines.join("\r\n");
+        const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
     }
 
     /*==================== HELPERS ====================*/

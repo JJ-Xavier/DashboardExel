@@ -15,6 +15,31 @@ const Charts = (() => {
 
     const instances = new Map();
 
+    /**
+     * Verifica se a biblioteca Chart.js (carregada via CDN no HTML) está
+     * disponível. Se o CDN falhar (bloqueio de rede, firewall corporativo,
+     * ad-blocker), a classe global `Chart` não existe e qualquer chamada
+     * `new Chart(...)` lançaria "Chart is not defined". Em vez de falhar
+     * silenciosamente (canvas em branco sem explicação), mostra um aviso
+     * visível dentro do próprio card do gráfico.
+     */
+    function ensureChartLib(canvasId) {
+        if (typeof Chart !== "undefined") return true;
+
+        const canvas = document.getElementById(canvasId);
+        const container = canvas ? canvas.closest(".chart-wrap") : null;
+        if (container) {
+            container.innerHTML =
+                '<div style="display:flex;align-items:center;justify-content:center;height:100%;' +
+                'color:#F25C5C;font-size:13px;text-align:center;padding:0 16px;">' +
+                'Não foi possível carregar a biblioteca de gráficos (Chart.js). ' +
+                'Verifique sua conexão com a internet ou se algum firewall/bloqueador ' +
+                'está impedindo o carregamento de scripts externos.</div>';
+        }
+        console.error("Charts: a biblioteca Chart.js não está disponível (verifique o <script> do CDN em dashboard.html).");
+        return false;
+    }
+
     function destroy(canvasId) {
         if (instances.has(canvasId)) {
             instances.get(canvasId).destroy();
@@ -35,6 +60,7 @@ const Charts = (() => {
 
     function bar(canvasId, { labels, values, label = "Total" }) {
         destroy(canvasId);
+        if (!ensureChartLib(canvasId)) return null;
         const ctx = document.getElementById(canvasId);
         if (!ctx) return null;
 
@@ -65,6 +91,7 @@ const Charts = (() => {
 
     function line(canvasId, { labels, values, label = "Tendência" }) {
         destroy(canvasId);
+        if (!ensureChartLib(canvasId)) return null;
         const ctx = document.getElementById(canvasId);
         if (!ctx) return null;
 
@@ -97,6 +124,7 @@ const Charts = (() => {
 
     function multiLine(canvasId, { labels, series }) {
         destroy(canvasId);
+        if (!ensureChartLib(canvasId)) return null;
         const ctx = document.getElementById(canvasId);
         if (!ctx) return null;
 
@@ -127,6 +155,7 @@ const Charts = (() => {
 
     function donut(canvasId, { labels, values }) {
         destroy(canvasId);
+        if (!ensureChartLib(canvasId)) return null;
         const ctx = document.getElementById(canvasId);
         if (!ctx) return null;
 
@@ -153,6 +182,7 @@ const Charts = (() => {
 
     function horizontalBar(canvasId, { labels, values, label = "Total" }) {
         destroy(canvasId);
+        if (!ensureChartLib(canvasId)) return null;
         const ctx = document.getElementById(canvasId);
         if (!ctx) return null;
 

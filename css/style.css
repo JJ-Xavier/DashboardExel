@@ -331,6 +331,9 @@ a { text-decoration: none; color: inherit; }
 .chart-card h3 { margin: 0 0 14px; font-size: 14.5px; font-weight: 700; color: var(--text); }
 .chart-wrap { height: 280px; position: relative; }
 
+.chart-card-wide { grid-column: 1 / -1; }
+.chart-card-wide .chart-wrap { height: 320px; }
+
 /*==================== TABELA ====================*/
 
 .table-section {
