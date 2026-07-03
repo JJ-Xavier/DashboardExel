@@ -12,7 +12,7 @@
         <div class="empty-card">
             <h2>Nenhum dado carregado</h2>
             <p>Importe uma planilha para visualizar o dashboard.</p>
-            <a href="index.html" class="btn-primary">Importar planilha</a>
+            <a href="index.html" class="btn-primary" id="emptyStateImportBtn">Importar planilha</a>
         </div>
     </div>
 
@@ -45,9 +45,13 @@
             <nav style="margin-top:auto;">
                 <div class="sidebar-section-label">Outros</div>
                 <div class="sidebar-nav">
-                    <a class="sidebar-link" href="index.html">
+                    <a class="sidebar-link" id="newImportLink" href="index.html">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 16V4M12 4L7 9M12 4l5 5"/><path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
                         Nova importação
+                    </a>
+                    <a class="sidebar-link" id="clearCacheLink" href="#">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/></svg>
+                        Limpar cache
                     </a>
                 </div>
             </nav>
@@ -60,7 +64,7 @@
                 <div class="topbar-controls">
                     <select id="sheetSelect" class="sheet-select"></select>
                     <input type="text" id="searchInput" class="search-input" placeholder="Buscar em todos os campos...">
-                    <a href="index.html" class="btn-secondary">Nova importação</a>
+                    <a href="index.html" class="btn-secondary" id="newImportBtnTop">Nova importação</a>
                 </div>
             </header>
 
