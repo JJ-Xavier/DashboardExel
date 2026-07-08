@@ -25,14 +25,24 @@
         reportsView: document.getElementById("reportsView"),
         reportsContainer: document.getElementById("reportsContainer"),
         topbarTitle: document.getElementById("topbarTitle"),
-        sidebarLinks: document.querySelectorAll(".sidebar-link[data-view]")
+        sidebarLinks: document.querySelectorAll(".sidebar-link[data-view]"),
+        newImportLink: document.getElementById("newImportLink"),
+        newImportBtnTop: document.getElementById("newImportBtnTop"),
+        emptyStateImportBtn: document.getElementById("emptyStateImportBtn"),
+        clearCacheLink: document.getElementById("clearCacheLink"),
+        configColumnsBtn: document.getElementById("configColumnsBtn"),
+        columnPickerPanel: document.getElementById("columnPickerPanel")
     };
 
     let db = null;
     let currentSheet = null;
     let currentView = "dashboard";
+    let visibleColumns = null; // colunas escolhidas manualmente para a aba atual (null = usar padrão)
 
     async function boot() {
+        wireCacheControls();
+        wireColumnPicker();
+
         db = await Database.loadFromStorage();
 
         if (!db || !db.getSheets().length) {
@@ -87,6 +97,125 @@
         if (view === "reports") renderReports();
     }
 
+    /**
+     * "Nova importação" agora limpa o banco local (IndexedDB) ANTES de
+     * redirecionar para a tela de import — evita o cenário de dados
+     * antigos/de uma versão anterior do sistema ficarem "grudados" e
+     * mostrarem números incoerentes mesmo depois de importar uma
+     * planilha nova. "Limpar cache" faz o mesmo sem sair da página,
+     * útil para diagnosticar problemas sem precisar reimportar na hora.
+     */
+    function wireCacheControls() {
+        const goToImportAfterClear = async (e) => {
+            e.preventDefault();
+            try { await Database.clear(); } catch (err) { console.error("Falha ao limpar cache:", err); }
+            window.location.href = "index.html";
+        };
+
+        els.newImportLink && els.newImportLink.addEventListener("click", goToImportAfterClear);
+        els.newImportBtnTop && els.newImportBtnTop.addEventListener("click", goToImportAfterClear);
+        els.emptyStateImportBtn && els.emptyStateImportBtn.addEventListener("click", goToImportAfterClear);
+
+        els.clearCacheLink && els.clearCacheLink.addEventListener("click", async (e) => {
+            e.preventDefault();
+            const confirmed = window.confirm(
+                "Isso vai apagar os dados importados salvos neste navegador. " +
+                "Você precisará importar a planilha novamente. Continuar?"
+            );
+            if (!confirmed) return;
+
+            try {
+                await Database.clear();
+                window.location.reload();
+            } catch (err) {
+                console.error("Falha ao limpar cache:", err);
+                alert("Não foi possível limpar o cache. Veja o console (F12) para detalhes.");
+            }
+        });
+    }
+
+    /*==================== COLUNAS VISÍVEIS NO DETALHAMENTO (config manual) ====================*/
+
+    const COLUMN_PREFS_KEY = "kapo_column_prefs";
+
+    /**
+     * Cada planilha tem sua própria "quantidade relevante" de colunas —
+     * decidida manualmente pela pessoa usando o dashboard, não adivinhada
+     * automaticamente. As escolhas ficam salvas no localStorage por nome
+     * de aba, então sobrevivem a reimportações da mesma planilha.
+     */
+    function getAllColumnPrefs() {
+        try {
+            return JSON.parse(localStorage.getItem(COLUMN_PREFS_KEY)) || {};
+        } catch (e) {
+            return {};
+        }
+    }
+
+    function loadColumnPrefs(sheetName) {
+        const all = getAllColumnPrefs();
+        return all[sheetName] || null; // null = sem preferência salva, usa padrão
+    }
+
+    function saveColumnPrefs(sheetName, columns) {
+        const all = getAllColumnPrefs();
+        all[sheetName] = columns;
+        localStorage.setItem(COLUMN_PREFS_KEY, JSON.stringify(all));
+    }
+
+    function wireColumnPicker() {
+        if (!els.configColumnsBtn || !els.columnPickerPanel) return;
+
+        els.configColumnsBtn.addEventListener("click", () => {
+            const isOpen = els.columnPickerPanel.style.display !== "none";
+            if (isOpen) {
+                els.columnPickerPanel.style.display = "none";
+                return;
+            }
+            renderColumnPickerPanel();
+            els.columnPickerPanel.style.display = "flex";
+        });
+    }
+
+    function renderColumnPickerPanel() {
+        if (!currentSheet) return;
+
+        const allCols = currentSheet.columns;
+        const defaultVisible = allCols.slice(0, 10);
+        const selected = new Set(visibleColumns || defaultVisible);
+
+        const checkboxesHtml = allCols.map(col => `
+            <label>
+                <input type="checkbox" value="${escapeHtml(col)}" ${selected.has(col) ? "checked" : ""}>
+                ${escapeHtml(prettify(col))}
+            </label>
+        `).join("");
+
+        els.columnPickerPanel.innerHTML = `
+            ${checkboxesHtml}
+            <div class="column-picker-actions">
+                <button class="btn-primary" id="applyColumnsBtn" type="button">Aplicar</button>
+                <button class="btn-secondary" id="resetColumnsBtn" type="button">Restaurar padrão</button>
+            </div>
+        `;
+
+        els.columnPickerPanel.querySelector("#applyColumnsBtn").addEventListener("click", () => {
+            const checked = [...els.columnPickerPanel.querySelectorAll("input[type=checkbox]:checked")]
+                .map(cb => cb.value);
+            visibleColumns = checked.length ? checked : defaultVisible;
+            saveColumnPrefs(currentSheet.name, visibleColumns);
+            els.columnPickerPanel.style.display = "none";
+            render();
+        });
+
+        els.columnPickerPanel.querySelector("#resetColumnsBtn").addEventListener("click", () => {
+            visibleColumns = null;
+            saveColumnPrefs(currentSheet.name, null);
+            els.columnPickerPanel.style.display = "none";
+            render();
+        });
+    }
+
     function populateSheetSelector() {
         if (!els.sheetSelect) return;
         els.sheetSelect.innerHTML = db.getSheets()
@@ -110,6 +239,7 @@
 
     function loadSheet(name) {
         currentSheet = db.sheet(name);
+        visibleColumns = loadColumnPrefs(name);
         renderFilterControls();
         render();
         if (currentView === "reports") renderReports();
@@ -436,7 +566,9 @@
     function renderTable(rows) {
         if (!els.dataTable || !currentSheet) return;
 
-        const cols = currentSheet.columns.slice(0, 10); // limita largura visual
+        const cols = (visibleColumns && visibleColumns.length)
+            ? visibleColumns.filter(c => currentSheet.columns.includes(c))
+            : currentSheet.columns.slice(0, 10); // padrão: primeiras 10, até o usuário configurar
         const visibleRows = rows.slice(0, 200);
 
         const thead = `<thead><tr>${cols.map(c => `<th>${prettify(c)}</th>`).join("")}</tr></thead>`;

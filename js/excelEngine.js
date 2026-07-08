@@ -118,17 +118,41 @@ class ExcelEngine {
         if (!rows.length) return null;
 
         const analysis = Analyzer.analyzeSheet(rows, this.config.sampleSize);
+
+        // FILTRO DE LINHAS "FANTASMA": planilhas financeiras costumam ter
+        // fórmulas arrastadas muito além dos dados reais. Essas linhas
+        // sobrevivem ao filtro inicial (têm ALGUMA célula não-vazia, ex:
+        // uma fórmula de imposto resultando em 0) mas não representam um
+        // registro de negócio de verdade — todas as colunas que IDENTIFICAM
+        // o registro (O.S, cliente, id) ficam vazias. Usa o papel semântico
+        // mais confiável disponível como "âncora" e descarta linhas sem
+        // valor nela. Se a planilha não tiver nenhuma coluna desse tipo
+        // (ex: um resumo agregado por data), não filtra nada.
+        const anchorRole = ["serviceOrder", "entityName", "id"]
+            .find(role => (analysis.roleMap[role] || []).length > 0);
+
+        let cleanRows = rows;
+        if (anchorRole) {
+            const anchorCol = analysis.roleMap[anchorRole][0];
+            cleanRows = rows.filter(r => {
+                const v = r[anchorCol];
+                return v !== null && v !== undefined && String(v).trim() !== "";
+            });
+        }
+
+        if (!cleanRows.length) cleanRows = rows; // segurança: nunca zera a planilha inteira
+
         const statistics = {};
         analysis.columns.forEach(c => {
-            statistics[c.column] = Statistics.summarizeColumn(rows, c.column, c.role);
+            statistics[c.column] = Statistics.summarizeColumn(cleanRows, c.column, c.role);
         });
-        const indexes = Indexer.buildIndexes(rows, analysis.roleMap);
+        const indexes = Indexer.buildIndexes(cleanRows, analysis.roleMap);
 
         return {
             name,
             columns: headers,
-            rowCount: rows.length,
-            rows,
+            rowCount: cleanRows.length,
+            rows: cleanRows,
             analysis,
             statistics,
             indexes
