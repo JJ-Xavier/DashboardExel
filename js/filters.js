@@ -81,6 +81,20 @@ const Filters = (() => {
         emit();
     }
 
+    /**
+     * Filtro de faixa numérica (mínimo/máximo) — usado em planilhas onde
+     * as linhas já são um agregado (ex.: "resumo por dia") e não sobra
+     * nenhuma coluna categórica para filtrar por igualdade. min/max
+     * podem ser -Infinity/Infinity para um lado em aberto.
+     */
+    function setNumberRangeCondition(role, min, max) {
+        state.conditions = state.conditions.filter(c => c.role !== role);
+        if (min !== null && max !== null) {
+            state.conditions.push({ role, op: "between", value: [min, max] });
+        }
+        emit();
+    }
+
     function clearAll() {
         state = { conditions: [], searchTerm: "" };
         emit();
@@ -111,6 +125,20 @@ const Filters = (() => {
         "id", "plate", "percentage", "number"
     ]);
 
+    // Planilhas de RESUMO (uma linha = um dia agregado) não têm nenhuma
+    // coluna categórica sobrando para filtrar por igualdade — só colunas
+    // numéricas (valores, contagens, percentuais). Nessas abas específicas,
+    // em vez de nenhum filtro além da data, geramos filtro de faixa
+    // (mínimo/máximo) para cada coluna numérica agregada. Fora dessa
+    // lista, colunas numéricas continuam sem filtro — a maioria das
+    // outras abas é "por registro" (uma OS, um cliente), onde faixa
+    // numérica tende a ser menos útil que os filtros categóricos normais.
+    const NUMERIC_RANGE_SHEETS = new Set([
+        "RESUMO POR DIA CARROS",
+        "RESUMO POR DIA MOTO"
+    ]);
+    const NUMERIC_RANGE_ROLES = new Set(["money", "serviceCost", "partsCost", "number", "percentage"]);
+
     /**
      * Gera definições de controles de filtro automaticamente,
      * com base em QUALQUER coluna categórica de baixa cardinalidade
@@ -118,6 +146,12 @@ const Filters = (() => {
      * ou do nome de coluna. Isso garante que o mesmo sistema de
      * filtros funcione de forma padronizada em qualquer aba/planilha.
      */
+    // Cabeçalhos em branco na planilha original viram "Coluna_N" (ver
+    // excelEngine.js). Não é um campo de negócio de verdade — é um
+    // preenchimento sintético para a planilha não quebrar — então nunca
+    // deve virar filtro (só gera ruído do tipo "Coluna_18" na tela).
+    const BLANK_HEADER_PATTERN = /^Coluna_\d+(_\d+)?$/i;
+
     function buildAutoFilters(sheetApi) {
         const columnRoles = sheetApi.getColumnRoles(); // [{column, role, ...}]
         const controls = [];
@@ -138,6 +172,7 @@ const Filters = (() => {
             const col = colInfo.column;
             if (seen.has(col)) continue;
             if (NEVER_FILTERABLE_ROLES.has(colInfo.role)) continue;
+            if (BLANK_HEADER_PATTERN.test(col)) continue;
 
             const values = sheetApi.unique(col);
             if (values.length < 2 || values.length > maxUnique) continue; // evita filtro inútil
@@ -162,6 +197,34 @@ const Filters = (() => {
             });
         }
 
+        if (NUMERIC_RANGE_SHEETS.has(sheetApi.name)) {
+            for (const colInfo of columnRoles) {
+                const col = colInfo.column;
+                if (seen.has(col)) continue; // já é filtro de outro tipo
+                if (!NUMERIC_RANGE_ROLES.has(colInfo.role)) continue;
+                if (BLANK_HEADER_PATTERN.test(col)) continue;
+
+                let min = null, max = null;
+                for (const row of sheetApi.rows) {
+                    const n = Utils.parseNumberSmart(row[col]);
+                    if (n === null) continue;
+                    if (min === null || n < min) min = n;
+                    if (max === null || n > max) max = n;
+                }
+                if (min === null || max === null || min === max) continue; // sem variação = filtro inútil
+
+                seen.add(col);
+                controls.push({
+                    role: col,
+                    column: col,
+                    label: prettifyLabel(col),
+                    type: "numberRange",
+                    min,
+                    max
+                });
+            }
+        }
+
         return controls;
     }
 
@@ -172,7 +235,7 @@ const Filters = (() => {
     }
 
     return {
-        onChange, setSearch, setCondition, setRangeCondition,
+        onChange, setSearch, setCondition, setRangeCondition, setNumberRangeCondition,
         toggleValue, setValues, removeCondition, activeCount,
         clearAll, getState, apply, buildAutoFilters
     };

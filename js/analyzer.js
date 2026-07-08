@@ -79,7 +79,18 @@ const Analyzer = (() => {
     /*==================== TESTADORES DE CONTEÚDO ====================*/
 
     const TESTERS = {
-        date: v => Utils.parseDateSmart(v) !== null && /\d/.test(String(v)),
+        // Datas em Excel são armazenadas como serial numérico (dias desde
+        // 1899-12-30). QUALQUER número parseia "com sucesso" nesse esquema
+        // — inclusive contagens pequenas (0, 1, 2...) e percentuais (0.65,
+        // 1.3), que originalmente passavam neste teste e faziam colunas
+        // como "QDT SINISTRO" ou "% Faturado" serem confundidas com data.
+        // Um serial de data real de uso comum (anos ~1950–2100) fica
+        // sempre acima de ~18000; abaixo disso é quase certamente uma
+        // contagem/percentual, não uma data.
+        date: v => {
+            if (typeof v === "number") return v >= 18000 && v <= 80000;
+            return Utils.parseDateSmart(v) !== null && /\d/.test(String(v));
+        },
         document_cpf: v => /^\d{3}\.?\d{3}\.?\d{3}-?\d{2}$/.test(String(v).replace(/\s/g, "")),
         document_cnpj: v => /^\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}$/.test(String(v).replace(/\s/g, "")),
         plate: v => /^[A-Za-z]{3}-?\d[A-Za-z0-9]\d{2}$/.test(String(v).replace(/\s/g, "")),
@@ -184,8 +195,15 @@ const Analyzer = (() => {
         for (const syn of dict) {
             const s = Utils.similarity(nameNorm, syn);
             if (s > nameScore) nameScore = s;
-            // bônus se o nome inteiro contém o sinônimo como substring
-            if (syn && nameNorm.includes(syn)) nameScore = Math.max(nameScore, 0.9);
+            // bônus se o nome inteiro contém o sinônimo como PALAVRA
+            // (fronteira de espaço), não como substring cru — sinônimos
+            // curtos como "dt" (data) ou "os" (ordem de serviço) batiam
+            // dentro de qualquer palavra que os contivesse por acidente
+            // (ex.: "QDT SINISTRO" contém "dt", "CUSTOS" contém "os"),
+            // classificando colunas erradas com o papel.
+            if (syn && new RegExp(`(^| )${syn.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}( |$)`).test(nameNorm)) {
+                nameScore = Math.max(nameScore, 0.9);
+            }
         }
 
         // O papel "percentage" tem "taxa" como sinônimo (para pegar colunas

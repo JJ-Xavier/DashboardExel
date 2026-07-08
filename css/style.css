@@ -209,6 +209,66 @@ a { text-decoration: none; color: inherit; }
 .search-input { width: 240px; }
 .search-input::placeholder { color: var(--text-faint); }
 
+/*==================== GERENCIADOR DE ABAS VISÍVEIS ====================*/
+
+.sheet-select-wrap { position: relative; display: flex; align-items: center; gap: 6px; }
+
+.btn-icon {
+    display: flex; align-items: center; justify-content: center;
+    width: 36px; height: 36px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--text-soft);
+    cursor: pointer;
+    transition: border-color .15s ease, color .15s ease;
+    flex-shrink: 0;
+}
+
+.btn-icon:hover { border-color: var(--accent-cyan); color: var(--accent-cyan); }
+
+.sheet-manager-panel {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 50;
+    width: 260px;
+    max-width: 80vw;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow);
+    padding: 12px;
+}
+
+.sheet-manager-panel[hidden] { display: none; }
+
+.sheet-manager-title {
+    font-size: 12px; font-weight: 700; color: var(--text-soft);
+    text-transform: uppercase; letter-spacing: .04em;
+    margin-bottom: 8px;
+}
+
+.sheet-manager-list {
+    max-height: 260px;
+    overflow-y: auto;
+    display: flex; flex-direction: column; gap: 2px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+}
+
+.sheet-manager-option {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 13px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.sheet-manager-option:hover { background: var(--bg-surface-soft); }
+.sheet-manager-option input { cursor: pointer; accent-color: var(--accent-cyan); flex-shrink: 0; }
+.sheet-manager-option span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .btn-primary, .btn-secondary {
     border-radius: var(--radius-sm);
     padding: 9px 16px;
@@ -275,6 +335,134 @@ a { text-decoration: none; color: inherit; }
 }
 
 .date-range { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-soft); }
+
+.number-range { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-soft); }
+.number-range input[type="number"] { width: 90px; }
+
+/* Esconde a seta nativa do input number (destoa do tema escuro);
+   um stepper customizado (.num-stepper) assume o lugar dela. */
+input[type="number"] {
+    appearance: textfield;           /* padrão */
+    -webkit-appearance: textfield;   /* Chrome, Safari, Opera */
+    -moz-appearance: textfield;      /* Firefox */
+}
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.num-stepper { position: relative; display: inline-flex; }
+.num-stepper input[type="number"] { padding-right: 22px; }
+
+.num-stepper-btns {
+    position: absolute;
+    top: 1px; right: 1px; bottom: 1px;
+    width: 18px;
+    display: flex; flex-direction: column;
+    border-left: 1px solid var(--border);
+    border-radius: 0 calc(var(--radius-sm) - 1px) calc(var(--radius-sm) - 1px) 0;
+    overflow: hidden;
+}
+
+.num-stepper button {
+    flex: 1 1 50%;
+    display: flex; align-items: center; justify-content: center;
+    border: none;
+    background: var(--bg-surface-soft);
+    color: var(--text-faint);
+    cursor: pointer;
+    padding: 0;
+    line-height: 0;
+    transition: background .1s ease, color .1s ease;
+}
+
+.num-stepper .num-step-up { border-bottom: 1px solid var(--border); }
+
+.num-stepper button:hover { background: var(--accent-cyan); color: #05202b; }
+.num-stepper button:active { filter: brightness(0.92); }
+
+/*==================== FILTROS AVANÇADOS (faixas numéricas agrupadas) ====================*/
+
+.advanced-filters { position: relative; }
+.advanced-filters label { visibility: hidden; } /* mantém o alinhamento vertical com os outros filtros */
+
+.advanced-filters-toggle {
+    display: flex; align-items: center;
+    gap: 8px;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-sm);
+    padding: 9px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    background: transparent;
+    color: var(--text-soft);
+    cursor: pointer;
+    transition: border-color .15s ease, color .15s ease, background .15s ease;
+    white-space: nowrap;
+}
+
+.advanced-filters-toggle:hover,
+.advanced-filters-toggle.open {
+    border-style: solid;
+    border-color: var(--accent-cyan);
+    color: var(--accent-cyan);
+    background: var(--bg-surface-soft);
+}
+
+.advanced-filters-badge {
+    display: inline-block;
+    background: var(--accent-cyan);
+    color: #05202b;
+    font-size: 11px;
+    font-weight: 700;
+    border-radius: 999px;
+    padding: 1px 7px;
+    line-height: 1.4;
+}
+
+.advanced-filters-panel {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 50;
+    width: 560px;
+    max-width: 90vw;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow);
+    padding: 12px;
+    animation: msPanelIn .12s ease-out;
+}
+
+.advanced-filters-panel[hidden] { display: none; }
+
+.advanced-filters-panel .ms-panel-actions { justify-content: flex-end; }
+
+.advanced-filters-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px 16px;
+    max-height: 320px;
+    overflow-y: auto;
+    padding-right: 4px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+}
+
+.advanced-filters-grid .number-filter { display: flex; flex-direction: column; gap: 4px; }
+.advanced-filters-grid .number-filter label {
+    visibility: visible;
+    font-size: 12px; color: var(--text-soft); font-weight: 600;
+}
+.advanced-filters-grid .number-range .num-stepper { flex: 1 1 auto; min-width: 0; }
+.advanced-filters-grid .number-range input[type="number"] { width: 100%; }
+
+@media (max-width: 640px) {
+    .advanced-filters-grid { grid-template-columns: 1fr; }
+    .advanced-filters-panel { width: 320px; right: auto; left: 0; }
+}
 
 .filter-count-badge {
     display: inline-block;

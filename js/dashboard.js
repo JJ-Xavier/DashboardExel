@@ -33,7 +33,9 @@
         emptyStateImportBtn: document.getElementById("emptyStateImportBtn"),
         clearCacheLink: document.getElementById("clearCacheLink"),
         configColumnsBtn: document.getElementById("configColumnsBtn"),
-        columnPickerPanel: document.getElementById("columnPickerPanel")
+        columnPickerPanel: document.getElementById("columnPickerPanel"),
+        manageSheetsBtn: document.getElementById("manageSheetsBtn"),
+        sheetManagerPanel: document.getElementById("sheetManagerPanel")
     };
 
     let db = null;
@@ -41,10 +43,12 @@
     let currentView = "dashboard";
     let roleLabels = {};        // rótulo legível de cada filtro da aba atual
     let visibleColumns = null;  // colunas escolhidas manualmente para a aba atual (null = usar padrão)
+    let hiddenSheets = [];      // nomes de abas ocultadas manualmente pelo usuário
 
     async function boot() {
         wireCacheControls();
         wireColumnPicker();
+        wireSheetManager();
 
         db = await Database.loadFromStorage();
 
@@ -54,6 +58,7 @@
             return;
         }
 
+        hiddenSheets = loadHiddenSheets();
         populateSheetSelector();
         loadSheet(pickDefaultSheet());
 
@@ -221,23 +226,113 @@
 
     function populateSheetSelector() {
         if (!els.sheetSelect) return;
-        els.sheetSelect.innerHTML = db.getSheets()
-            .map(name => `<option value="${name}">${name}</option>`)
+        const visible = visibleSheetNames();
+        els.sheetSelect.innerHTML = visible
+            .map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
             .join("");
         els.sheetSelect.value = pickDefaultSheet();
+    }
+
+    /** Nomes de abas que devem aparecer no seletor (todas, menos as ocultadas manualmente). */
+    function visibleSheetNames() {
+        const all = db.getSheets();
+        const visible = all.filter(n => !hiddenSheets.includes(n));
+        return visible.length ? visible : all; // segurança: nunca esconde todas de uma vez
     }
 
     /**
      * Evita abrir por padrão uma aba "legada"/histórica (comum em bases
      * financeiras que mantêm uma planilha antiga junto da atual). Prefere
      * a primeira aba cujo nome não sinalize isso; se todas sinalizarem,
-     * cai de volta para a primeira aba mesmo assim.
+     * cai de volta para a primeira aba mesmo assim. Nunca escolhe uma
+     * aba que o usuário ocultou manualmente.
      */
     function pickDefaultSheet() {
-        const names = db.getSheets();
+        const names = visibleSheetNames();
         const legacyPattern = /antiga?|legad|legacy|hist[oó]ric/i;
         const preferred = names.find(n => !legacyPattern.test(n));
         return preferred || names[0];
+    }
+
+    /*==================== ABAS VISÍVEIS/OCULTAS (config manual) ====================*/
+
+    const HIDDEN_SHEETS_KEY = "kapo_hidden_sheets";
+
+    /**
+     * Nem toda base tem uso para todas as abas o tempo todo (ex.: uma
+     * "BASE GERAL ANTIGA" mantida só de histórico). Em vez de forçar a
+     * pessoa a rolar por abas que não vai olhar, ela pode ocultar/
+     * reexibir cada aba manualmente — a escolha fica salva no
+     * localStorage e sobrevive a reimportações.
+     */
+    function loadHiddenSheets() {
+        try {
+            return JSON.parse(localStorage.getItem(HIDDEN_SHEETS_KEY)) || [];
+        } catch (e) {
+            return [];
+        }
+    }
+
+    function saveHiddenSheets(names) {
+        localStorage.setItem(HIDDEN_SHEETS_KEY, JSON.stringify(names));
+    }
+
+    function wireSheetManager() {
+        if (!els.manageSheetsBtn || !els.sheetManagerPanel) return;
+
+        els.manageSheetsBtn.addEventListener("click", e => {
+            e.stopPropagation();
+            const isOpen = !els.sheetManagerPanel.hidden;
+            if (isOpen) {
+                els.sheetManagerPanel.hidden = true;
+                return;
+            }
+            renderSheetManagerPanel();
+            els.sheetManagerPanel.hidden = false;
+        });
+
+        document.addEventListener("click", e => {
+            if (els.sheetManagerPanel && !els.sheetManagerPanel.hidden &&
+                !els.sheetManagerPanel.contains(e.target) && e.target !== els.manageSheetsBtn) {
+                els.sheetManagerPanel.hidden = true;
+            }
+        });
+    }
+
+    function renderSheetManagerPanel() {
+        if (!db) return;
+        const all = db.getSheets();
+
+        els.sheetManagerPanel.innerHTML = `
+            <div class="sheet-manager-title">Abas visíveis</div>
+            <div class="sheet-manager-list">
+                ${all.map(name => `
+                    <label class="sheet-manager-option">
+                        <input type="checkbox" value="${escapeHtml(name)}" ${hiddenSheets.includes(name) ? "" : "checked"}>
+                        <span>${escapeHtml(name)}</span>
+                    </label>
+                `).join("")}
+            </div>
+        `;
+
+        els.sheetManagerPanel.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+            cb.addEventListener("change", () => {
+                const name = cb.value;
+                if (cb.checked) {
+                    hiddenSheets = hiddenSheets.filter(n => n !== name);
+                } else if (!hiddenSheets.includes(name)) {
+                    hiddenSheets = [...hiddenSheets, name];
+                }
+                saveHiddenSheets(hiddenSheets);
+
+                const wasShowingHiddenSheet = currentSheet && !visibleSheetNames().includes(currentSheet.name);
+                populateSheetSelector();
+                if (wasShowingHiddenSheet) {
+                    Filters.clearAll();
+                    loadSheet(els.sheetSelect.value);
+                }
+            });
+        });
     }
 
     function loadSheet(name) {
@@ -258,7 +353,14 @@
         roleLabels = {};
         controls.forEach(ctrl => { roleLabels[ctrl.role] = ctrl.label; });
 
-        controls.forEach(ctrl => {
+        // Filtros de faixa numérica (ex.: abas de resumo diário) não vão
+        // soltos na linha de filtros — em abas com muitas colunas
+        // agregadas isso vira uma parede de campos. Em vez disso, todos
+        // eles ficam agrupados atrás de um único botão "Filtros
+        // avançados", que abre um painel com todos juntos.
+        const numberRangeControls = controls.filter(c => c.type === "numberRange");
+
+        controls.filter(c => c.type !== "numberRange").forEach(ctrl => {
             const wrap = document.createElement("div");
             wrap.className = "filter-control";
 
@@ -354,18 +456,144 @@
             els.filtersRow.appendChild(wrap);
         });
 
+        if (numberRangeControls.length) {
+            renderAdvancedFiltersButton(numberRangeControls);
+        }
+
         syncFilterUI();
     }
 
     function closeAllMultiselects() {
         els.filtersRow.querySelectorAll(".ms-panel").forEach(p => p.hidden = true);
         els.filtersRow.querySelectorAll(".ms-toggle").forEach(b => b.classList.remove("open"));
+        const advPanel = els.filtersRow.querySelector(".advanced-filters-panel");
+        const advToggle = els.filtersRow.querySelector(".advanced-filters-toggle");
+        if (advPanel) advPanel.hidden = true;
+        if (advToggle) advToggle.classList.remove("open");
     }
 
     // Fecha os dropdowns de multi-seleção ao clicar fora deles
     document.addEventListener("click", e => {
         if (els.filtersRow && !els.filtersRow.contains(e.target)) closeAllMultiselects();
     });
+
+    /**
+     * Agrupa filtros de faixa numérica (potencialmente muitos, em abas de
+     * resumo agregado) atrás de um único botão "Filtros avançados", em
+     * vez de espalhar um campo min/max para cada coluna na linha de
+     * filtros. Evita que a área de filtros vire uma parede de campos.
+     */
+    function renderAdvancedFiltersButton(numberRangeControls) {
+        const wrap = document.createElement("div");
+        wrap.className = "filter-control advanced-filters";
+
+        const fmtHint = n => Number.isInteger(n) ? n : Number(n.toFixed(2));
+
+        // Passo do stepper proporcional à faixa de cada coluna: percentuais
+        // (max <= 5) andam de 0.1 em 0.1, contagens pequenas de 1 em 1,
+        // valores grandes (dinheiro) de 10 ou 100 em 100 — evita ter que
+        // clicar dezenas de vezes para sair do canto da faixa.
+        const stepFor = ctrl => {
+            if (ctrl.max <= 5) return 0.1;
+            if (ctrl.max <= 50) return 1;
+            if (ctrl.max <= 500) return 10;
+            return 100;
+        };
+
+        const stepperHtml = (edge, placeholder) => `
+            <div class="num-stepper">
+                <input type="number" step="any" data-edge="${edge}" placeholder="${placeholder}">
+                <div class="num-stepper-btns">
+                    <button type="button" class="num-step-up" tabindex="-1" aria-label="Aumentar">
+                        <svg viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 15l-6-6-6 6"/></svg>
+                    </button>
+                    <button type="button" class="num-step-down" tabindex="-1" aria-label="Diminuir">
+                        <svg viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" stroke-width="3"><path d="M6 9l6 6 6-6"/></svg>
+                    </button>
+                </div>
+            </div>
+        `;
+
+        wrap.innerHTML = `
+            <label>&nbsp;</label>
+            <button type="button" class="advanced-filters-toggle">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M7 12h10M10 18h4"/></svg>
+                <span>Filtros avançados</span>
+                <span class="advanced-filters-badge" style="display:none;">0</span>
+            </button>
+            <div class="advanced-filters-panel" hidden>
+                <div class="ms-panel-actions">
+                    <button type="button" class="advanced-filters-clear">Limpar filtros avançados</button>
+                </div>
+                <div class="advanced-filters-grid">
+                    ${numberRangeControls.map(ctrl => `
+                        <div class="number-filter" data-role="${escapeHtml(ctrl.role)}">
+                            <label>${escapeHtml(ctrl.label)}</label>
+                            <div class="number-range">
+                                ${stepperHtml("min", fmtHint(ctrl.min))}
+                                <span>até</span>
+                                ${stepperHtml("max", fmtHint(ctrl.max))}
+                            </div>
+                        </div>
+                    `).join("")}
+                </div>
+            </div>
+        `;
+
+        const toggleBtn = wrap.querySelector(".advanced-filters-toggle");
+        const panel = wrap.querySelector(".advanced-filters-panel");
+
+        toggleBtn.addEventListener("click", e => {
+            e.stopPropagation();
+            const isOpen = !panel.hidden;
+            closeAllMultiselects();
+            panel.hidden = isOpen;
+            toggleBtn.classList.toggle("open", !panel.hidden);
+        });
+
+        numberRangeControls.forEach(ctrl => {
+            const row = panel.querySelector(`.number-filter[data-role="${cssEscape(ctrl.role)}"]`);
+            const [minInput, maxInput] = row.querySelectorAll("input");
+            const step = stepFor(ctrl);
+
+            const applyRange = () => {
+                if (minInput.value === "" && maxInput.value === "") {
+                    Filters.removeCondition(ctrl.role);
+                    return;
+                }
+                let min = minInput.value !== "" ? Number(minInput.value) : -Infinity;
+                let max = maxInput.value !== "" ? Number(maxInput.value) : Infinity;
+                if (min > max) [min, max] = [max, min];
+                Filters.setNumberRangeCondition(ctrl.role, min, max);
+            };
+            minInput.addEventListener("change", applyRange);
+            maxInput.addEventListener("change", applyRange);
+
+            row.querySelectorAll(".num-stepper").forEach(stepperWrap => {
+                const input = stepperWrap.querySelector("input");
+                const fallback = input.dataset.edge === "min" ? ctrl.min : ctrl.max;
+                const bump = delta => {
+                    const current = input.value !== "" ? Number(input.value) : fallback;
+                    const next = Math.round((current + delta) * 1000) / 1000; // evita erro de ponto flutuante
+                    input.value = next;
+                    input.dispatchEvent(new Event("change", { bubbles: true }));
+                };
+                stepperWrap.querySelector(".num-step-up").addEventListener("click", () => bump(step));
+                stepperWrap.querySelector(".num-step-down").addEventListener("click", () => bump(-step));
+            });
+        });
+
+        wrap.querySelector(".advanced-filters-clear").addEventListener("click", () => {
+            numberRangeControls.forEach(ctrl => Filters.removeCondition(ctrl.role));
+        });
+
+        els.filtersRow.appendChild(wrap);
+    }
+
+    /** Escapa um valor para uso seguro dentro de um seletor de atributo CSS. */
+    function cssEscape(value) {
+        return String(value).replace(/["\\]/g, "\\$&");
+    }
 
     function updateMultiselectToggleText(wrap, ctrl) {
         const cond = Filters.getState().conditions.find(c => c.role === ctrl.role && c.op === "in");
@@ -415,6 +643,26 @@
             }
         });
 
+        els.filtersRow.querySelectorAll(".number-filter").forEach(wrap => {
+            const role = wrap.dataset.role;
+            const cond = state.conditions.find(c => c.role === role && c.op === "between");
+            const [minInput, maxInput] = wrap.querySelectorAll("input");
+            if (!cond) {
+                if (minInput) minInput.value = "";
+                if (maxInput) maxInput.value = "";
+            }
+        });
+
+        const advBadge = els.filtersRow.querySelector(".advanced-filters-badge");
+        if (advBadge) {
+            const activeNumberRanges = state.conditions.filter(c =>
+                c.op === "between" &&
+                els.filtersRow.querySelector(`.number-filter[data-role="${cssEscape(c.role)}"]`)
+            ).length;
+            advBadge.style.display = activeNumberRanges > 0 ? "inline-block" : "none";
+            advBadge.textContent = activeNumberRanges;
+        }
+
         const count = Filters.activeCount();
         if (els.filterCountBadge) {
             els.filterCountBadge.style.display = count > 0 ? "inline-block" : "none";
@@ -436,7 +684,7 @@
                 cond.value.forEach(v => {
                     chips.push({ text: `${label}: ${v}`, onRemove: () => Filters.toggleValue(cond.role, v) });
                 });
-            } else if (cond.op === "dateBetween" || cond.op === "between") {
+            } else if (cond.op === "dateBetween") {
                 const [min, max] = cond.value;
                 const fmt = ts => isFinite(ts) ? Utils.formatDate(new Date(ts)) : null;
                 const startTxt = fmt(min);
@@ -445,6 +693,17 @@
                 if (startTxt && endTxt) rangeTxt = `${startTxt} até ${endTxt}`;
                 else if (startTxt) rangeTxt = `a partir de ${startTxt}`;
                 else if (endTxt) rangeTxt = `até ${endTxt}`;
+                else rangeTxt = "intervalo";
+                chips.push({ text: `${label}: ${rangeTxt}`, onRemove: () => Filters.removeCondition(cond.role) });
+            } else if (cond.op === "between") {
+                const [min, max] = cond.value;
+                const fmt = n => isFinite(n) ? Utils.formatNumber(n, 2).replace(/\,00$/, "") : null;
+                const minTxt = fmt(min);
+                const maxTxt = fmt(max);
+                let rangeTxt;
+                if (minTxt && maxTxt) rangeTxt = `${minTxt} até ${maxTxt}`;
+                else if (minTxt) rangeTxt = `≥ ${minTxt}`;
+                else if (maxTxt) rangeTxt = `≤ ${maxTxt}`;
                 else rangeTxt = "intervalo";
                 chips.push({ text: `${label}: ${rangeTxt}`, onRemove: () => Filters.removeCondition(cond.role) });
             } else {
