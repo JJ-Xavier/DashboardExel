@@ -130,6 +130,9 @@ class SheetAPI {
                 switch (cond.op) {
                     case "=": return String(v) === String(cond.value);
                     case "!=": return String(v) !== String(cond.value);
+                    case "in":
+                        return Array.isArray(cond.value) &&
+                            cond.value.some(val => String(val) === String(v));
                     case ">": return Utils.parseNumberSmart(v) > cond.value;
                     case "<": return Utils.parseNumberSmart(v) < cond.value;
                     case ">=": return Utils.parseNumberSmart(v) >= cond.value;
@@ -139,6 +142,12 @@ class SheetAPI {
                     case "between": {
                         const n = Utils.parseNumberSmart(v);
                         return n !== null && n >= cond.value[0] && n <= cond.value[1];
+                    }
+                    case "dateBetween": {
+                        const d = Utils.parseDateSmart(v);
+                        if (!d) return false;
+                        const t = d.getTime();
+                        return t >= cond.value[0] && t <= cond.value[1];
                     }
                     default: return true;
                 }

@@ -21,6 +21,8 @@
         rowCountLabel: document.getElementById("rowCountLabel"),
         emptyState: document.getElementById("emptyState"),
         clearFiltersBtn: document.getElementById("clearFiltersBtn"),
+        filterCountBadge: document.getElementById("filterCountBadge"),
+        activeChipsRow: document.getElementById("activeChipsRow"),
         dashboardView: document.getElementById("dashboardView"),
         reportsView: document.getElementById("reportsView"),
         reportsContainer: document.getElementById("reportsContainer"),
@@ -29,16 +31,20 @@
         newImportLink: document.getElementById("newImportLink"),
         newImportBtnTop: document.getElementById("newImportBtnTop"),
         emptyStateImportBtn: document.getElementById("emptyStateImportBtn"),
-        clearCacheLink: document.getElementById("clearCacheLink")
+        clearCacheLink: document.getElementById("clearCacheLink"),
+        configColumnsBtn: document.getElementById("configColumnsBtn"),
+        columnPickerPanel: document.getElementById("columnPickerPanel")
     };
 
     let db = null;
     let currentSheet = null;
     let currentView = "dashboard";
-    let visibleColumns = null; // colunas escolhidas manualmente para a aba atual (null = usar padrão)
+    let roleLabels = {};        // rótulo legível de cada filtro da aba atual
+    let visibleColumns = null;  // colunas escolhidas manualmente para a aba atual (null = usar padrão)
 
     async function boot() {
         wireCacheControls();
+        wireColumnPicker();
 
         db = await Database.loadFromStorage();
 
@@ -68,7 +74,7 @@
             render();
         });
 
-        Filters.onChange(() => render());
+        Filters.onChange(() => { render(); syncFilterUI(); });
 
         els.sidebarLinks.forEach(link => {
             link.addEventListener("click", e => {
@@ -131,6 +137,88 @@
         });
     }
 
+    /*==================== COLUNAS VISÍVEIS NO DETALHAMENTO (config manual) ====================*/
+
+    const COLUMN_PREFS_KEY = "kapo_column_prefs";
+
+    /**
+     * Cada planilha tem sua própria "quantidade relevante" de colunas —
+     * decidida manualmente pela pessoa usando o dashboard, não adivinhada
+     * automaticamente. As escolhas ficam salvas no localStorage por nome
+     * de aba, então sobrevivem a reimportações da mesma planilha.
+     */
+    function getAllColumnPrefs() {
+        try {
+            return JSON.parse(localStorage.getItem(COLUMN_PREFS_KEY)) || {};
+        } catch (e) {
+            return {};
+        }
+    }
+
+    function loadColumnPrefs(sheetName) {
+        const all = getAllColumnPrefs();
+        return all[sheetName] || null; // null = sem preferência salva, usa padrão
+    }
+
+    function saveColumnPrefs(sheetName, columns) {
+        const all = getAllColumnPrefs();
+        all[sheetName] = columns;
+        localStorage.setItem(COLUMN_PREFS_KEY, JSON.stringify(all));
+    }
+
+    function wireColumnPicker() {
+        if (!els.configColumnsBtn || !els.columnPickerPanel) return;
+
+        els.configColumnsBtn.addEventListener("click", () => {
+            const isOpen = els.columnPickerPanel.style.display !== "none";
+            if (isOpen) {
+                els.columnPickerPanel.style.display = "none";
+                return;
+            }
+            renderColumnPickerPanel();
+            els.columnPickerPanel.style.display = "flex";
+        });
+    }
+
+    function renderColumnPickerPanel() {
+        if (!currentSheet) return;
+
+        const allCols = currentSheet.columns;
+        const defaultVisible = allCols.slice(0, 10);
+        const selected = new Set(visibleColumns || defaultVisible);
+
+        const checkboxesHtml = allCols.map(col => `
+            <label>
+                <input type="checkbox" value="${escapeHtml(col)}" ${selected.has(col) ? "checked" : ""}>
+                ${escapeHtml(prettify(col))}
+            </label>
+        `).join("");
+
+        els.columnPickerPanel.innerHTML = `
+            ${checkboxesHtml}
+            <div class="column-picker-actions">
+                <button class="btn-primary" id="applyColumnsBtn" type="button">Aplicar</button>
+                <button class="btn-secondary" id="resetColumnsBtn" type="button">Restaurar padrão</button>
+            </div>
+        `;
+
+        els.columnPickerPanel.querySelector("#applyColumnsBtn").addEventListener("click", () => {
+            const checked = [...els.columnPickerPanel.querySelectorAll("input[type=checkbox]:checked")]
+                .map(cb => cb.value);
+            visibleColumns = checked.length ? checked : defaultVisible;
+            saveColumnPrefs(currentSheet.name, visibleColumns);
+            els.columnPickerPanel.style.display = "none";
+            render();
+        });
+
+        els.columnPickerPanel.querySelector("#resetColumnsBtn").addEventListener("click", () => {
+            visibleColumns = null;
+            saveColumnPrefs(currentSheet.name, null);
+            els.columnPickerPanel.style.display = "none";
+            render();
+        });
+    }
+
     function populateSheetSelector() {
         if (!els.sheetSelect) return;
         els.sheetSelect.innerHTML = db.getSheets()
@@ -167,25 +255,66 @@
 
         const controls = Filters.buildAutoFilters(currentSheet);
         els.filtersRow.innerHTML = "";
+        roleLabels = {};
+        controls.forEach(ctrl => { roleLabels[ctrl.role] = ctrl.label; });
 
         controls.forEach(ctrl => {
             const wrap = document.createElement("div");
             wrap.className = "filter-control";
 
             if (ctrl.type === "select") {
+                wrap.classList.add("multiselect");
+                wrap.dataset.role = ctrl.role;
                 wrap.innerHTML = `
                     <label>${ctrl.label}</label>
-                    <select data-role="${ctrl.role}">
-                        <option value="__all__">Todos</option>
-                        ${ctrl.options.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}
-                    </select>
+                    <button type="button" class="ms-toggle" data-role="${ctrl.role}">
+                        <span class="ms-toggle-text">Todos</span>
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+                    </button>
+                    <div class="ms-panel" hidden>
+                        <div class="ms-panel-actions">
+                            <button type="button" class="ms-clear">Limpar</button>
+                        </div>
+                        <div class="ms-options">
+                            ${ctrl.options.map(v => `
+                                <label class="ms-option">
+                                    <input type="checkbox" value="${escapeHtml(v)}">
+                                    <span>${escapeHtml(v)}</span>
+                                </label>
+                            `).join("")}
+                        </div>
+                    </div>
                 `;
-                wrap.querySelector("select").addEventListener("change", e => {
-                    Filters.setCondition(ctrl.role, e.target.value);
+
+                const toggleBtn = wrap.querySelector(".ms-toggle");
+                const panel = wrap.querySelector(".ms-panel");
+                const checkboxes = [...wrap.querySelectorAll('input[type="checkbox"]')];
+
+                toggleBtn.addEventListener("click", e => {
+                    e.stopPropagation();
+                    const isOpen = !panel.hidden;
+                    closeAllMultiselects();
+                    panel.hidden = isOpen;
+                    toggleBtn.classList.toggle("open", !panel.hidden);
+                });
+
+                checkboxes.forEach(cb => {
+                    cb.addEventListener("change", () => {
+                        Filters.toggleValue(ctrl.role, cb.value);
+                        updateMultiselectToggleText(wrap, ctrl);
+                    });
+                });
+
+                wrap.querySelector(".ms-clear").addEventListener("click", () => {
+                    Filters.removeCondition(ctrl.role);
+                    checkboxes.forEach(cb => cb.checked = false);
+                    updateMultiselectToggleText(wrap, ctrl);
                 });
             }
 
             if (ctrl.type === "dateRange") {
+                wrap.classList.add("date-filter");
+                wrap.dataset.role = ctrl.role;
                 wrap.innerHTML = `
                     <label>${ctrl.label}</label>
                     <div class="date-range">
@@ -196,13 +325,27 @@
                 `;
                 const [startInput, endInput] = wrap.querySelectorAll("input");
                 const applyRange = () => {
-                    if (startInput.value && endInput.value) {
-                        Filters.setRangeCondition(
-                            ctrl.role,
-                            new Date(startInput.value).getTime(),
-                            new Date(endInput.value).getTime()
-                        );
+                    if (!startInput.value && !endInput.value) {
+                        Filters.removeCondition(ctrl.role);
+                        return;
                     }
+
+                    let start = startInput.value ? new Date(startInput.value) : null;
+                    let end = endInput.value ? new Date(endInput.value) : null;
+
+                    if (start) start.setHours(0, 0, 0, 0);
+                    if (end) end.setHours(23, 59, 59, 999);
+
+                    // Se o usuário inverter as datas, troca automaticamente
+                    if (start && end && start.getTime() > end.getTime()) {
+                        [start, end] = [end, start];
+                    }
+
+                    Filters.setRangeCondition(
+                        ctrl.role,
+                        start ? start.getTime() : -Infinity,
+                        end ? end.getTime() : Infinity
+                    );
                 };
                 startInput.addEventListener("change", applyRange);
                 endInput.addEventListener("change", applyRange);
@@ -210,6 +353,132 @@
 
             els.filtersRow.appendChild(wrap);
         });
+
+        syncFilterUI();
+    }
+
+    function closeAllMultiselects() {
+        els.filtersRow.querySelectorAll(".ms-panel").forEach(p => p.hidden = true);
+        els.filtersRow.querySelectorAll(".ms-toggle").forEach(b => b.classList.remove("open"));
+    }
+
+    // Fecha os dropdowns de multi-seleção ao clicar fora deles
+    document.addEventListener("click", e => {
+        if (els.filtersRow && !els.filtersRow.contains(e.target)) closeAllMultiselects();
+    });
+
+    function updateMultiselectToggleText(wrap, ctrl) {
+        const cond = Filters.getState().conditions.find(c => c.role === ctrl.role && c.op === "in");
+        const textEl = wrap.querySelector(".ms-toggle-text");
+        if (!cond || !cond.value.length) {
+            textEl.textContent = "Todos";
+        } else if (cond.value.length === 1) {
+            textEl.textContent = cond.value[0];
+        } else {
+            textEl.textContent = `${cond.value.length} selecionados`;
+        }
+    }
+
+    /**
+     * Mantém os checkboxes, o texto dos dropdowns, o contador de filtros
+     * ativos e a linha de chips removíveis em sincronia com Filters.state.
+     */
+    function syncFilterUI() {
+        if (!els.filtersRow) return;
+
+        const state = Filters.getState();
+
+        els.filtersRow.querySelectorAll(".multiselect").forEach(wrap => {
+            const role = wrap.dataset.role;
+            const cond = state.conditions.find(c => c.role === role && c.op === "in");
+            const selected = cond ? cond.value : [];
+
+            wrap.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                cb.checked = selected.includes(cb.value);
+            });
+
+            const textEl = wrap.querySelector(".ms-toggle-text");
+            if (textEl) {
+                if (!selected.length) textEl.textContent = "Todos";
+                else if (selected.length === 1) textEl.textContent = selected[0];
+                else textEl.textContent = `${selected.length} selecionados`;
+            }
+        });
+
+        els.filtersRow.querySelectorAll(".date-filter").forEach(wrap => {
+            const role = wrap.dataset.role;
+            const cond = state.conditions.find(c => c.role === role && c.op === "dateBetween");
+            const [startInput, endInput] = wrap.querySelectorAll("input");
+            if (!cond) {
+                if (startInput) startInput.value = "";
+                if (endInput) endInput.value = "";
+            }
+        });
+
+        const count = Filters.activeCount();
+        if (els.filterCountBadge) {
+            els.filterCountBadge.style.display = count > 0 ? "inline-block" : "none";
+            els.filterCountBadge.textContent = count;
+        }
+
+        renderActiveChips(state);
+    }
+
+    /** Renderiza chips removíveis para cada filtro/valor ativo, mais a busca. */
+    function renderActiveChips(state) {
+        if (!els.activeChipsRow) return;
+
+        const chips = [];
+
+        state.conditions.forEach(cond => {
+            const label = prettifyRole(cond.role);
+            if (cond.op === "in") {
+                cond.value.forEach(v => {
+                    chips.push({ text: `${label}: ${v}`, onRemove: () => Filters.toggleValue(cond.role, v) });
+                });
+            } else if (cond.op === "dateBetween" || cond.op === "between") {
+                const [min, max] = cond.value;
+                const fmt = ts => isFinite(ts) ? Utils.formatDate(new Date(ts)) : null;
+                const startTxt = fmt(min);
+                const endTxt = fmt(max);
+                let rangeTxt;
+                if (startTxt && endTxt) rangeTxt = `${startTxt} até ${endTxt}`;
+                else if (startTxt) rangeTxt = `a partir de ${startTxt}`;
+                else if (endTxt) rangeTxt = `até ${endTxt}`;
+                else rangeTxt = "intervalo";
+                chips.push({ text: `${label}: ${rangeTxt}`, onRemove: () => Filters.removeCondition(cond.role) });
+            } else {
+                chips.push({ text: `${label}: ${cond.value}`, onRemove: () => Filters.removeCondition(cond.role) });
+            }
+        });
+
+        if (state.searchTerm) {
+            chips.push({
+                text: `Busca: "${state.searchTerm}"`,
+                onRemove: () => {
+                    Filters.setSearch("");
+                    if (els.searchInput) els.searchInput.value = "";
+                }
+            });
+        }
+
+        els.activeChipsRow.innerHTML = "";
+        els.activeChipsRow.style.display = chips.length ? "flex" : "none";
+
+        chips.forEach(chip => {
+            const el = document.createElement("span");
+            el.className = "filter-chip";
+            el.innerHTML = `${escapeHtml(chip.text)} <button type="button" aria-label="Remover filtro">&times;</button>`;
+            el.querySelector("button").addEventListener("click", chip.onRemove);
+            els.activeChipsRow.appendChild(el);
+        });
+    }
+
+    function prettifyRole(role) {
+        if (roleLabels[role]) return roleLabels[role];
+        return String(role)
+            .replace(/_/g, " ")
+            .replace(/\b\w/g, c => c.toUpperCase());
     }
 
     /*==================== RENDER PRINCIPAL ====================*/

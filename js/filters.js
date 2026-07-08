@@ -32,10 +32,51 @@ const Filters = (() => {
         emit();
     }
 
+    /**
+     * Alterna um valor dentro de um filtro multi-seleção (op "in").
+     * Se o valor já estiver selecionado, remove; caso contrário, adiciona.
+     * Remove a condição inteira quando fica vazia.
+     */
+    function toggleValue(role, value) {
+        let cond = state.conditions.find(c => c.role === role && c.op === "in");
+        if (!cond) {
+            cond = { role, op: "in", value: [value] };
+            state.conditions.push(cond);
+        } else {
+            const idx = cond.value.indexOf(value);
+            if (idx >= 0) cond.value.splice(idx, 1);
+            else cond.value.push(value);
+            if (cond.value.length === 0) {
+                state.conditions = state.conditions.filter(c => c !== cond);
+            }
+        }
+        emit();
+    }
+
+    /** Define de uma vez todos os valores selecionados de um filtro multi-seleção. */
+    function setValues(role, values) {
+        state.conditions = state.conditions.filter(c => c.role !== role);
+        if (values && values.length) {
+            state.conditions.push({ role, op: "in", value: [...values] });
+        }
+        emit();
+    }
+
+    /** Remove completamente a condição de um papel (ex.: clique no "x" de um chip agrupado). */
+    function removeCondition(role) {
+        state.conditions = state.conditions.filter(c => c.role !== role);
+        emit();
+    }
+
+    /** Quantidade total de filtros ativos (cada condição conta 1, busca conta 1). */
+    function activeCount() {
+        return state.conditions.length + (state.searchTerm ? 1 : 0);
+    }
+
     function setRangeCondition(role, min, max) {
         state.conditions = state.conditions.filter(c => c.role !== role);
         if (min !== null && max !== null) {
-            state.conditions.push({ role, op: "between", value: [min, max] });
+            state.conditions.push({ role, op: "dateBetween", value: [min, max] });
         }
         emit();
     }
@@ -59,24 +100,51 @@ const Filters = (() => {
         return rows;
     }
 
+    // Papéis que NUNCA fazem sentido como filtro de seleção (dinheiro,
+    // identificadores únicos, documentos, contato, data — que tem
+    // controle próprio de intervalo). Qualquer outra coluna categórica
+    // de baixa cardinalidade vira filtro automaticamente, em QUALQUER
+    // aba, sem precisar saber o nome ou o papel da coluna de antemão.
+    const NEVER_FILTERABLE_ROLES = new Set([
+        "money", "serviceCost", "partsCost", "date",
+        "document_cpf", "document_cnpj", "email", "phone",
+        "id", "plate", "percentage", "number"
+    ]);
+
     /**
      * Gera definições de controles de filtro automaticamente,
-     * com base nos papéis disponíveis na planilha (sem hardcode
-     * de nomes de coluna).
+     * com base em QUALQUER coluna categórica de baixa cardinalidade
+     * (2 a 60 valores únicos), independentemente do papel semântico
+     * ou do nome de coluna. Isso garante que o mesmo sistema de
+     * filtros funcione de forma padronizada em qualquer aba/planilha.
      */
     function buildAutoFilters(sheetApi) {
-        const filterableRoles = ["status", "entityName", "modelName", "serviceOrder"];
+        const columnRoles = sheetApi.getColumnRoles(); // [{column, role, ...}]
         const controls = [];
+        const seen = new Set();
 
-        for (const role of filterableRoles) {
-            const col = sheetApi.resolveColumn(role);
-            if (!col) continue;
+        // O limite de "quantos valores únicos ainda é um filtro útil"
+        // se adapta ao tamanho da aba: planilhas grandes (ex.: milhares
+        // de OS) tendem a acumular mais variações legítimas de uma
+        // mesma coluna categórica (ex.: modelos de veículo) do que
+        // planilhas pequenas. Um teto fixo (ex.: 60) fazia com que a
+        // MESMA coluna (ex.: "MODELO VEÍCULO") virasse filtro em abas
+        // menores e sumisse em abas maiores, dando a impressão de
+        // filtros inconsistentes entre abas.
+        const totalRows = sheetApi.rows.length;
+        const maxUnique = Math.min(150, Math.max(60, Math.round(totalRows * 0.02)));
 
-            const values = sheetApi.unique(role);
-            if (values.length < 2 || values.length > 60) continue; // evita filtro inútil
+        for (const colInfo of columnRoles) {
+            const col = colInfo.column;
+            if (seen.has(col)) continue;
+            if (NEVER_FILTERABLE_ROLES.has(colInfo.role)) continue;
 
+            const values = sheetApi.unique(col);
+            if (values.length < 2 || values.length > maxUnique) continue; // evita filtro inútil
+
+            seen.add(col);
             controls.push({
-                role,
+                role: col, // a própria coluna é a chave única do filtro
                 column: col,
                 label: prettifyLabel(col),
                 type: "select",
@@ -105,6 +173,7 @@ const Filters = (() => {
 
     return {
         onChange, setSearch, setCondition, setRangeCondition,
+        toggleValue, setValues, removeCondition, activeCount,
         clearAll, getState, apply, buildAutoFilters
     };
 })();

@@ -276,6 +276,160 @@ a { text-decoration: none; color: inherit; }
 
 .date-range { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-soft); }
 
+.filter-count-badge {
+    display: inline-block;
+    background: var(--accent-cyan);
+    color: #05202b;
+    font-size: 11px;
+    font-weight: 700;
+    border-radius: 999px;
+    padding: 1px 7px;
+    margin-left: 6px;
+    vertical-align: middle;
+}
+
+/*==================== MULTI-SELEÇÃO ====================*/
+
+.filter-control.multiselect {
+    width: 220px;
+    flex: 0 0 auto;
+}
+
+.multiselect { position: relative; }
+
+.ms-toggle {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 9px 12px;
+    font-size: 13px;
+    background: var(--bg-surface-soft);
+    color: var(--text);
+    cursor: pointer;
+    transition: border-color .15s ease, background .15s ease;
+}
+
+.ms-toggle:hover { border-color: var(--accent-cyan); }
+.ms-toggle.open { border-color: var(--accent-cyan); background: var(--bg-surface); }
+
+.ms-toggle svg { flex-shrink: 0; transition: transform .15s ease; color: var(--text-soft); }
+.ms-toggle.open svg { transform: rotate(180deg); color: var(--accent-cyan); }
+
+.ms-toggle-text {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.ms-panel {
+    display: block;
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    z-index: 50;
+    width: 260px;
+    max-width: 80vw;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow);
+    padding: 8px;
+    animation: msPanelIn .12s ease-out;
+}
+
+.ms-panel[hidden] { display: none; }
+
+@keyframes msPanelIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.ms-panel-actions {
+    display: flex; justify-content: flex-end;
+    padding: 2px 4px 8px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 6px;
+}
+
+.ms-panel-actions button {
+    background: none; border: none;
+    color: var(--accent-cyan);
+    font-size: 12px; font-weight: 600;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 4px;
+}
+
+.ms-panel-actions button:hover { background: var(--bg-surface-soft); }
+
+.ms-options {
+    max-height: 240px;
+    overflow-y: auto;
+    display: flex; flex-direction: column; gap: 2px;
+    padding-right: 2px;
+
+    /* barra de rolagem discreta, no tom do tema */
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+}
+
+.ms-options::-webkit-scrollbar { width: 6px; }
+.ms-options::-webkit-scrollbar-track { background: transparent; }
+.ms-options::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 999px;
+}
+.ms-options::-webkit-scrollbar-thumb:hover { background: var(--text-faint); }
+
+.ms-option {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 13px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background .1s ease;
+}
+
+.ms-option:hover { background: var(--bg-surface-soft); }
+.ms-option:has(input:checked) { background: rgba(54, 199, 224, 0.12); }
+.ms-option input {
+    cursor: pointer;
+    accent-color: var(--accent-cyan);
+    flex-shrink: 0;
+}
+.ms-option span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/*==================== CHIPS DE FILTROS ATIVOS ====================*/
+
+.active-chips-row {
+    display: none;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.filter-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--bg-surface-soft);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 12px;
+    border-radius: 999px;
+    padding: 4px 6px 4px 12px;
+}
+
+.filter-chip button {
+    background: none; border: none;
+    color: var(--text-soft);
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 999px;
+}
+
+.filter-chip button:hover { background: var(--border); color: var(--text); }
+
 /*==================== KPI ====================*/
 
 .kpi-row {
