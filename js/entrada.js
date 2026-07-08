@@ -114,4 +114,23 @@
         dropZone.addEventListener("click", () => fileInput.click());
     }
 
+    const clearCacheBtn = document.getElementById("clearCacheBtn");
+    if (clearCacheBtn) {
+        clearCacheBtn.addEventListener("click", async () => {
+            const confirmed = window.confirm(
+                "Isso vai apagar os dados importados salvos neste navegador. Continuar?"
+            );
+            if (!confirmed) return;
+
+            try {
+                await Database.clear();
+                clearCacheBtn.textContent = "Dados limpos ✓";
+                setTimeout(() => { clearCacheBtn.textContent = "Limpar dados salvos deste navegador"; }, 2000);
+            } catch (err) {
+                console.error("Falha ao limpar cache:", err);
+                alert("Não foi possível limpar o cache. Veja o console (F12) para detalhes.");
+            }
+        });
+    }
+
 })();
