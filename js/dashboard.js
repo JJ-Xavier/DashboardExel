@@ -25,7 +25,11 @@
         reportsView: document.getElementById("reportsView"),
         reportsContainer: document.getElementById("reportsContainer"),
         topbarTitle: document.getElementById("topbarTitle"),
-        sidebarLinks: document.querySelectorAll(".sidebar-link[data-view]")
+        sidebarLinks: document.querySelectorAll(".sidebar-link[data-view]"),
+        newImportLink: document.getElementById("newImportLink"),
+        newImportBtnTop: document.getElementById("newImportBtnTop"),
+        emptyStateImportBtn: document.getElementById("emptyStateImportBtn"),
+        clearCacheLink: document.getElementById("clearCacheLink")
     };
 
     let db = null;
@@ -34,6 +38,8 @@
     let visibleColumns = null; // colunas escolhidas manualmente para a aba atual (null = usar padrão)
 
     async function boot() {
+        wireCacheControls();
+
         db = await Database.loadFromStorage();
 
         if (!db || !db.getSheets().length) {
@@ -86,6 +92,43 @@
         if (els.topbarTitle) els.topbarTitle.textContent = view === "reports" ? "Relatórios" : "Dashboard";
 
         if (view === "reports") renderReports();
+    }
+
+    /**
+     * "Nova importação" agora limpa o banco local (IndexedDB) ANTES de
+     * redirecionar para a tela de import — evita o cenário de dados
+     * antigos/de uma versão anterior do sistema ficarem "grudados" e
+     * mostrarem números incoerentes mesmo depois de importar uma
+     * planilha nova. "Limpar cache" faz o mesmo sem sair da página,
+     * útil para diagnosticar problemas sem precisar reimportar na hora.
+     */
+    function wireCacheControls() {
+        const goToImportAfterClear = async (e) => {
+            e.preventDefault();
+            try { await Database.clear(); } catch (err) { console.error("Falha ao limpar cache:", err); }
+            window.location.href = "index.html";
+        };
+
+        els.newImportLink && els.newImportLink.addEventListener("click", goToImportAfterClear);
+        els.newImportBtnTop && els.newImportBtnTop.addEventListener("click", goToImportAfterClear);
+        els.emptyStateImportBtn && els.emptyStateImportBtn.addEventListener("click", goToImportAfterClear);
+
+        els.clearCacheLink && els.clearCacheLink.addEventListener("click", async (e) => {
+            e.preventDefault();
+            const confirmed = window.confirm(
+                "Isso vai apagar os dados importados salvos neste navegador. " +
+                "Você precisará importar a planilha novamente. Continuar?"
+            );
+            if (!confirmed) return;
+
+            try {
+                await Database.clear();
+                window.location.reload();
+            } catch (err) {
+                console.error("Falha ao limpar cache:", err);
+                alert("Não foi possível limpar o cache. Veja o console (F12) para detalhes.");
+            }
+        });
     }
 
     function populateSheetSelector() {
