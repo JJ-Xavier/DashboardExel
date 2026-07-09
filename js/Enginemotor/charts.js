@@ -186,6 +186,32 @@ const Charts = (() => {
         const ctx = document.getElementById(canvasId);
         if (!ctx) return null;
 
+        const TICK_FONT = "12px Inter, sans-serif";
+
+        /**
+         * Corta o texto pelo tamanho real (em pixels) que ele ocupa
+         * desenhado, não por quantidade de caracteres — assim se adapta
+         * a cards grandes ou pequenos, em vez de usar um número fixo que
+         * funciona numa tela e estoura em outra.
+         */
+        function fitLabel(measureCtx, text, maxWidth) {
+            measureCtx.save();
+            measureCtx.font = TICK_FONT;
+            if (measureCtx.measureText(text).width <= maxWidth) {
+                measureCtx.restore();
+                return text;
+            }
+            let lo = 0, hi = text.length;
+            while (lo < hi) {
+                const mid = Math.ceil((lo + hi) / 2);
+                const candidate = text.slice(0, mid).trimEnd() + "…";
+                if (measureCtx.measureText(candidate).width <= maxWidth) lo = mid;
+                else hi = mid - 1;
+            }
+            measureCtx.restore();
+            return lo > 0 ? text.slice(0, lo).trimEnd() + "…" : "…";
+        }
+
         const chart = new Chart(ctx, {
             type: "bar",
             data: {
@@ -199,11 +225,42 @@ const Charts = (() => {
             },
             options: baseOptions({
                 indexAxis: "y",
+                layout: { padding: { left: 4 } },
                 scales: {
                     x: { beginAtZero: true, grid: { color: "#1B2540" }, ticks: { color: "#5C6786" } },
-                    y: { grid: { display: false }, ticks: { color: "#5C6786" } }
+                    y: {
+                        grid: { display: false },
+                        ticks: {
+                            color: "#5C6786",
+                            font: { family: "Inter, sans-serif", size: 12 },
+                            // Nomes longos ficam cortados no início (o eixo cresce da
+                            // direita pra esquerda), então em vez de deixar o Chart.js
+                            // clipar o texto no meio, truncamos com reticências no fim,
+                            // medindo o texto de verdade em pixels — o orçamento aqui só
+                            // decide QUANDO cortar; quem reserva o espaço de verdade pro
+                            // texto resultante continua sendo o próprio Chart.js (ele já
+                            // faz isso certo sozinho — forçar um afterFit por cima só
+                            // atrapalhava e cortava 1 caractere à mais). Nome completo
+                            // aparece no tooltip.
+                            callback: function (value) {
+                                const full = this.getLabelForValue(value);
+                                const budget = Math.max(90, Math.min(200, this.chart.width * 0.42));
+                                return fitLabel(this.chart.ctx, full, budget);
+                            }
+                        }
+                    }
                 },
-                plugins: { legend: { display: false } }
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: "#0B1220",
+                        padding: 10,
+                        cornerRadius: 8,
+                        borderColor: "#232E4A",
+                        borderWidth: 1,
+                        callbacks: { title: items => labels[items[0].dataIndex] }
+                    }
+                }
             })
         });
 

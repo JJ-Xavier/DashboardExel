@@ -768,35 +768,54 @@
         const statusCol = currentSheet.resolveColumn("status");
         const dateCol = currentSheet.resolveColumn("date");
 
-        const cards = [];
-
-        cards.push({
-            label: "Total de Registros",
-            value: Utils.formatNumber(rows.length)
-        });
+        // Cards agrupados por categoria; a ordem final segue a prioridade
+        // dinheiro > contagem > percentuais > outros, e só entra o que a
+        // aba realmente tiver (colunas ausentes simplesmente não geram card).
+        const money = [];
+        const counting = [];
+        const percentual = [];
+        const others = [];
 
         if (moneyCol) {
-            cards.push({
+            money.push({
                 label: "Faturamento Total",
-                value: Utils.formatMoney(Statistics.sum(rows, moneyCol))
+                value: Utils.formatMoney(Statistics.sum(rows, moneyCol)),
+                type: "positive"
             });
-            cards.push({
+            money.push({
                 label: "Ticket Médio por O.S",
-                value: Utils.formatMoney(Statistics.average(rows, moneyCol))
+                value: Utils.formatMoney(Statistics.average(rows, moneyCol)),
+                type: "positive"
             });
         }
 
         if (serviceCostCol) {
-            cards.push({
+            money.push({
                 label: "Custo de Serviço (Total)",
-                value: Utils.formatMoney(Statistics.sum(rows, serviceCostCol))
+                value: Utils.formatMoney(Statistics.sum(rows, serviceCostCol)),
+                type: "negative"
             });
         }
 
         if (partsCostCol) {
-            cards.push({
+            money.push({
                 label: "Custo de Peças (Total)",
-                value: Utils.formatMoney(Statistics.sum(rows, partsCostCol))
+                value: Utils.formatMoney(Statistics.sum(rows, partsCostCol)),
+                type: "negative"
+            });
+        }
+
+        counting.push({
+            label: "Total de Registros",
+            value: Utils.formatNumber(rows.length),
+            type: "neutral"
+        });
+
+        if (entityCol) {
+            counting.push({
+                label: prettify(entityCol) + "s Únicos",
+                value: Utils.formatNumber(Statistics.uniqueValues(rows, entityCol).length),
+                type: "neutral"
             });
         }
 
@@ -805,23 +824,17 @@
             const sParts = Statistics.sum(rows, partsCostCol);
             const totalSP = sService + sParts;
             const pctService = totalSP ? (sService / totalSP) * 100 : 0;
-            cards.push({
+            percentual.push({
                 label: "% Serviço sobre Serviço+Peças",
-                value: `${Utils.formatNumber(pctService, 1)}%`
-            });
-        }
-
-        if (entityCol) {
-            cards.push({
-                label: prettify(entityCol) + "s Únicos",
-                value: Utils.formatNumber(Statistics.uniqueValues(rows, entityCol).length)
+                value: `${Utils.formatNumber(pctService, 1)}%`,
+                type: "neutral"
             });
         }
 
         if (statusCol) {
             const dist = Statistics.distribution(rows, statusCol, 1);
             if (dist.length) {
-                cards.push({ label: `Status mais comum`, value: String(dist[0].label) });
+                others.push({ label: `Status mais comum`, value: String(dist[0].label), type: "neutral" });
             }
         }
 
@@ -829,12 +842,14 @@
             const dates = rows.map(r => Utils.parseDateSmart(r[dateCol])).filter(Boolean);
             if (dates.length) {
                 const max = new Date(Math.max(...dates));
-                cards.push({ label: "Registro mais recente", value: Utils.formatDate(max) });
+                others.push({ label: "Registro mais recente", value: Utils.formatDate(max), type: "neutral" });
             }
         }
 
+        const cards = [...money, ...counting, ...percentual, ...others];
+
         els.kpiRow.innerHTML = cards.map(c => `
-            <div class="kpi-card">
+            <div class="kpi-card kpi-${c.type}">
                 <span class="kpi-label">${c.label}</span>
                 <span class="kpi-value">${c.value}</span>
             </div>

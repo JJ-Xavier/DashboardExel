@@ -639,17 +639,18 @@ input[type="number"]::-webkit-inner-spin-button {
 
 .kpi-card::before {
     content: "";
-    width: 42px; height: 42px;
-    border-radius: 50%;
-    display: block;
-    background: rgba(79,124,255,0.16);
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    border-radius: var(--radius) var(--radius) 0 0;
+    background: var(--accent-blue);
 }
 
-.kpi-row .kpi-card:nth-child(5n+1)::before { background: rgba(79,124,255,0.16); }
-.kpi-row .kpi-card:nth-child(5n+2)::before { background: rgba(139,108,242,0.16); }
-.kpi-row .kpi-card:nth-child(5n+3)::before { background: rgba(54,199,224,0.16); }
-.kpi-row .kpi-card:nth-child(5n+4)::before { background: rgba(46,217,163,0.16); }
-.kpi-row .kpi-card:nth-child(5n+5)::before { background: rgba(242,169,59,0.16); }
+/* Cor da barra reflete a natureza financeira do indicador:
+   receita = verde | custo = laranja/vermelho | neutro/informativo = azul */
+.kpi-card.kpi-positive::before { background: var(--accent-green); }
+.kpi-card.kpi-negative::before { background: var(--accent-red); }
+.kpi-card.kpi-neutral::before  { background: var(--accent-blue); }
 
 .kpi-label { font-size: 12.5px; color: var(--text-soft); font-weight: 600; }
 .kpi-value { font-size: 26px; font-weight: 800; color: var(--text); letter-spacing: -.01em; }
