@@ -16,13 +16,106 @@
 
     if (!fileInput) return; // página atual não é a de entrada
 
-    const engine = new ExcelEngine();
-
-    engine.on("progress", ({ stage, percent, message }) => {
+    function reportProgress({ percent, message }) {
         if (progressWrap) progressWrap.style.display = "block";
         if (progressBar) progressBar.style.width = `${percent}%`;
         if (progressLabel) progressLabel.textContent = message;
-    });
+    }
+
+    /*--------------------------------------------------------
+      Importação via Web Worker (caminho principal).
+      Todo o trabalho pesado (leitura do XLSX, parse de abas,
+      análise semântica, estatísticas, índices) roda fora da
+      thread principal, então a UI nunca "trava" e o Chrome
+      nunca mostra o aviso de página lenta, independente do
+      tamanho do arquivo.
+    --------------------------------------------------------*/
+    function importViaWorker(file, onProgress) {
+        return new Promise((resolve, reject) => {
+            let worker;
+            try {
+                worker = new Worker("js/Enginemotor/excelWorker.js");
+            } catch (err) {
+                reject(err);
+                return;
+            }
+
+            worker.onmessage = (event) => {
+                const msg = event.data || {};
+                if (msg.type === "progress") {
+                    onProgress({ percent: msg.percent, message: msg.message });
+                } else if (msg.type === "done") {
+                    worker.terminate();
+                    resolve(msg.rawDatabase);
+                } else if (msg.type === "error") {
+                    worker.terminate();
+                    reject(new Error(msg.message));
+                }
+            };
+
+            worker.onerror = (err) => {
+                worker.terminate();
+                reject((err && err.message) ? err : new Error("Erro na Worker de importação."));
+            };
+
+            worker.postMessage({ type: "import", file });
+        });
+    }
+
+    /*--------------------------------------------------------
+      Fallback: caminho antigo, síncrono, na própria thread
+      principal. Só é usado se a Worker não puder ser criada
+      ou falhar por algum motivo (ex: navegador muito antigo,
+      ambiente que bloqueie importScripts). Nesse caso o
+      comportamento é exatamente o mesmo de antes desta mudança
+      — nunca pior, só sem a garantia extra da Worker.
+      As dependências (XLSX, Analyzer, Indexer, ExcelEngine) só
+      são carregadas aqui, sob demanda, porque no caminho normal
+      (via Worker) elas não precisam estar na thread principal.
+    --------------------------------------------------------*/
+    let fallbackDepsPromise = null;
+
+    function loadScript(src) {
+        return new Promise((resolve, reject) => {
+            const el = document.createElement("script");
+            el.src = src;
+            el.onload = () => resolve();
+            el.onerror = () => reject(new Error(`Falha ao carregar ${src}`));
+            document.head.appendChild(el);
+        });
+    }
+
+    function ensureFallbackDeps() {
+        if (typeof ExcelEngine !== "undefined") return Promise.resolve();
+        if (!fallbackDepsPromise) {
+            fallbackDepsPromise = loadScript("https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js")
+                .then(() => loadScript("js/Enginemotor/analyzer.js"))
+                .then(() => loadScript("js/Enginemotor/indexer.js"))
+                .then(() => loadScript("js/Enginemotor/excelEngine.js"));
+        }
+        return fallbackDepsPromise;
+    }
+
+    async function importViaMainThread(file, onProgress) {
+        await ensureFallbackDeps();
+        const engine = new ExcelEngine();
+        engine.on("progress", ({ percent, message }) => onProgress({ percent, message }));
+        return engine.import(file);
+    }
+
+    async function importSpreadsheet(file, onProgress) {
+        if (typeof Worker !== "undefined") {
+            try {
+                return await importViaWorker(file, onProgress);
+            } catch (err) {
+                console.warn(
+                    "entrada.js: importação via Worker falhou, usando fallback na thread principal.",
+                    err
+                );
+            }
+        }
+        return importViaMainThread(file, onProgress);
+    }
 
     async function handleFile(file) {
         if (!file) return;
@@ -38,7 +131,7 @@
         }
 
         try {
-            const rawDatabase = await engine.import(file);
+            const rawDatabase = await importSpreadsheet(file, reportProgress);
 
             if (!rawDatabase.metadata.sheetCount) {
                 showError("Nenhuma aba com dados válidos foi encontrada no arquivo.");

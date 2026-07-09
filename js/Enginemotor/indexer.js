@@ -34,14 +34,24 @@ const Indexer = (() => {
 
             for (const col of cols) {
                 const map = new Map();
+                // cache de parse de data por valor bruto: a mesma data (ex: um
+                // dia inteiro de faturamento) costuma repetir em milhares de
+                // linhas, então parseDateSmart só roda uma vez por valor único.
+                const dateKeyCache = role === "date" ? new Map() : null;
 
                 rows.forEach((row, i) => {
                     let key = row[col];
                     if (key === null || key === undefined || key === "") return;
 
                     if (role === "date") {
-                        const d = Utils.parseDateSmart(key);
-                        key = d ? d.toISOString().slice(0, 10) : null;
+                        const cacheKey = key instanceof Date ? key.getTime() : key;
+                        let resolved = dateKeyCache.get(cacheKey);
+                        if (resolved === undefined) {
+                            const d = Utils.parseDateSmart(key);
+                            resolved = d ? d.toISOString().slice(0, 10) : null;
+                            dateKeyCache.set(cacheKey, resolved);
+                        }
+                        key = resolved;
                         if (!key) return;
                     } else {
                         key = String(key).trim();
