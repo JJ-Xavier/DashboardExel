@@ -16,6 +16,16 @@
 
     if (!fileInput) return; // página atual não é a de entrada
 
+    // Limites de tamanho de arquivo: acima do "hard" a importação é
+    // bloqueada (risco real de travar a aba/estourar memória); entre
+    // o "warn" e o "hard" só avisamos e deixamos o usuário decidir.
+    const MAX_FILE_SIZE_HARD = 200 * 1024 * 1024; // 200MB
+    const MAX_FILE_SIZE_WARN = 50 * 1024 * 1024;  // 50MB
+
+    function formatMB(bytes) {
+        return (bytes / (1024 * 1024)).toFixed(0);
+    }
+
     function reportProgress({ percent, message }) {
         if (progressWrap) progressWrap.style.display = "block";
         if (progressBar) progressBar.style.width = `${percent}%`;
@@ -130,6 +140,27 @@
             return;
         }
 
+        if (file.size === 0) {
+            showError("O arquivo está vazio (0 bytes).");
+            return;
+        }
+
+        if (file.size > MAX_FILE_SIZE_HARD) {
+            showError(
+                `Arquivo muito grande (${formatMB(file.size)}MB). O limite é ${formatMB(MAX_FILE_SIZE_HARD)}MB ` +
+                `— acima disso o navegador pode travar. Tente dividir os dados em arquivos menores.`
+            );
+            return;
+        }
+
+        if (file.size > MAX_FILE_SIZE_WARN) {
+            const proceed = window.confirm(
+                `Este arquivo tem ${formatMB(file.size)}MB e pode demorar bastante ou consumir muita ` +
+                `memória do navegador. Deseja continuar mesmo assim?`
+            );
+            if (!proceed) return;
+        }
+
         try {
             const rawDatabase = await importSpreadsheet(file, reportProgress);
 
@@ -171,7 +202,13 @@
 
         } catch (err) {
             console.error(err);
-            showError("Não foi possível processar o arquivo. Verifique se ele não está corrompido.");
+            // translateReadError (excelEngine.js) já produz mensagens amigáveis
+            // pros casos conhecidos (senha, corrompido); usa ela quando existe,
+            // com um fallback genérico só pro que não foi previsto.
+            showError(
+                (err && err.message) ||
+                "Não foi possível processar o arquivo. Verifique se ele não está corrompido."
+            );
         }
     }
 
@@ -200,8 +237,21 @@
         );
 
         dropZone.addEventListener("drop", e => {
-            const file = e.dataTransfer.files[0];
-            handleFile(file);
+            const files = e.dataTransfer && e.dataTransfer.files;
+
+            if (!files || !files.length) {
+                showError("Não foi possível identificar um arquivo válido no item arrastado.");
+                return;
+            }
+
+            if (files.length > 1) {
+                // alert() em vez de showError: handleFile() limpa o errorBox
+                // assim que começa, então um showError aqui seria apagado
+                // antes do usuário conseguir ler.
+                alert(`Envie apenas um arquivo por vez. Foi usado somente "${files[0].name}".`);
+            }
+
+            handleFile(files[0]);
         });
 
         dropZone.addEventListener("click", () => fileInput.click());

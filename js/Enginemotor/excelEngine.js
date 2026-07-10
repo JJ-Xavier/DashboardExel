@@ -55,11 +55,19 @@ class ExcelEngine {
         const ext = (file.name.split(".").pop() || "").toLowerCase();
 
         let workbook;
-        if (ext === "csv") {
-            const text = new TextDecoder("utf-8").decode(buffer);
-            workbook = XLSX.read(text, { type: "string", raw: false });
-        } else {
-            workbook = XLSX.read(buffer, { type: "array", cellDates: true });
+        try {
+            if (ext === "csv") {
+                const text = this.decodeCsvBuffer(buffer);
+                workbook = XLSX.read(text, { type: "string", raw: false });
+            } else {
+                workbook = XLSX.read(buffer, { type: "array", cellDates: true });
+            }
+        } catch (err) {
+            throw this.translateReadError(err, file.name);
+        }
+
+        if (!workbook || !workbook.SheetNames || !workbook.SheetNames.length) {
+            throw new Error(`O arquivo "${file.name}" não contém nenhuma aba legível.`);
         }
 
         this.emitProgress("parse", 20, "Lendo abas...");
@@ -92,6 +100,59 @@ class ExcelEngine {
     }
 
     /**
+     * Decodifica o buffer de um CSV tentando UTF-8 primeiro; se o
+     * arquivo não for UTF-8 válido (caso comum de exports do Excel/
+     * sistemas corporativos brasileiros, que costumam sair em
+     * Windows-1252/Latin1), cai para Windows-1252. Sem isso, acentos
+     * (ç, ã, é...) viram caracteres quebrados silenciosamente, sem
+     * nenhum erro visível.
+     */
+    decodeCsvBuffer(buffer) {
+        const bytes = new Uint8Array(buffer);
+
+        // BOM UTF-8 explícito: sem ambiguidade, decodifica direto.
+        if (bytes.length >= 3 && bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) {
+            return new TextDecoder("utf-8").decode(buffer);
+        }
+
+        try {
+            // "fatal: true" faz o decoder lançar erro se encontrar uma
+            // sequência de bytes que não é UTF-8 válido, em vez de
+            // silenciosamente substituir por "�".
+            return new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+        } catch (e) {
+            return new TextDecoder("windows-1252").decode(buffer);
+        }
+    }
+
+    /**
+     * Traduz erros crus do SheetJS/parser em mensagens que fazem
+     * sentido pra quem está importando o arquivo, em vez de deixar
+     * vazar mensagens técnicas em inglês.
+     */
+    translateReadError(err, fileName) {
+        const msg = (err && err.message) || "";
+
+        if (/password|encrypt/i.test(msg)) {
+            return new Error(
+                `O arquivo "${fileName}" está protegido por senha. Remova a proteção no Excel ` +
+                `(Arquivo > Informações > Proteger Pasta de Trabalho > Remover Senha) e importe novamente.`
+            );
+        }
+
+        if (/central directory|corrupt|not a zip|invalid signature|end of data|unexpected end/i.test(msg)) {
+            return new Error(
+                `O arquivo "${fileName}" parece estar corrompido ou incompleto (o download pode ter ` +
+                `falhado). Tente baixar/exportar o arquivo novamente.`
+            );
+        }
+
+        return new Error(
+            `Não foi possível ler o arquivo "${fileName}"${msg ? `: ${msg}` : " (formato inválido)"}.`
+        );
+    }
+
+    /**
      * Converte uma worksheet do SheetJS em uma estrutura normalizada:
      * { name, columns, rows, analysis, indexes, statistics }
      */
@@ -102,20 +163,29 @@ class ExcelEngine {
         const headerInfo = this.detectHeader(matrix);
         if (!headerInfo) return null;
 
-        const { headerRowIndex, headers } = headerInfo;
+        const { headerRowIndex, headers: rawHeaders } = headerInfo;
 
         const dataRows = matrix.slice(headerRowIndex + 1)
             .filter(r => r && r.some(cell => cell !== null && cell !== undefined && cell !== ""));
 
-        const rows = dataRows.map(r => {
+        let rows = dataRows.map(r => {
             const obj = {};
-            headers.forEach((h, i) => {
+            rawHeaders.forEach((h, i) => {
                 obj[h] = this.normalizeValue(r[i]);
             });
             return obj;
         });
 
         if (!rows.length) return null;
+
+        // Remove colunas "fantasma" no final: planilhas com formatação
+        // vazada (bordas/estilos arrastados muito além da tabela real)
+        // geram colunas extras sem cabeçalho real (Coluna_N) e sem
+        // nenhum dado em nenhuma linha. Sem isso, uma planilha pequena
+        // pode virar centenas de colunas processadas à toa.
+        const trimmed = this.trimGhostColumns(rawHeaders, rows);
+        const headers = trimmed.headers;
+        rows = trimmed.rows;
 
         const analysis = Analyzer.analyzeSheet(rows, this.config.sampleSize);
 
@@ -157,6 +227,37 @@ class ExcelEngine {
             statistics,
             indexes
         };
+    }
+
+    /**
+     * Remove colunas no final da tabela que não têm nome real (viraram
+     * "Coluna_N" no detectHeader) E não têm nenhum valor em nenhuma
+     * linha. Verifica só uma amostra das linhas (não a planilha
+     * inteira) para não pesar em planilhas com muitas linhas.
+     */
+    trimGhostColumns(headers, rows) {
+        const sample = rows.length > 500 ? rows.slice(0, 500) : rows;
+
+        let cut = headers.length;
+        for (let i = headers.length - 1; i >= 0; i--) {
+            const h = headers[i];
+            if (!/^Coluna_\d+$/.test(h)) break;
+
+            const hasAnyValue = sample.some(r => r[h] !== null && r[h] !== undefined);
+            if (hasAnyValue) break;
+
+            cut = i;
+        }
+
+        if (cut === headers.length) return { headers, rows };
+
+        const keptHeaders = headers.slice(0, cut);
+        const keptRows = rows.map(r => {
+            const obj = {};
+            keptHeaders.forEach(h => { obj[h] = r[h]; });
+            return obj;
+        });
+        return { headers: keptHeaders, rows: keptRows };
     }
 
     /**
@@ -224,10 +325,24 @@ class ExcelEngine {
      */
     normalizeValue(v) {
         if (v === undefined) return null;
-        if (v instanceof Date) return v;
+        if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+
+        if (typeof v === "number") {
+            // Fórmulas quebradas (ex: divisão por zero, referência
+            // circular) podem chegar aqui como NaN/Infinity. Sem esse
+            // filtro, viram "NaN" ou "Infinity" nos KPIs e gráficos.
+            return isFinite(v) ? v : null;
+        }
+
         if (typeof v === "string") {
             const trimmed = v.trim();
-            return trimmed === "" ? null : trimmed;
+            if (trimmed === "") return null;
+            // Erros de fórmula do Excel que sobrevivem como texto
+            // (#DIV/0!, #REF!, #N/A etc.) não são um valor de negócio.
+            if (/^#(DIV\/0!|N\/A|NAME\?|NULL!|NUM!|REF!|VALUE!|GETTING_DATA)$/i.test(trimmed)) {
+                return null;
+            }
+            return trimmed;
         }
         return v;
     }
