@@ -49,6 +49,7 @@
         wireCacheControls();
         wireColumnPicker();
         wireSheetManager();
+        wireKpiBreakdown();
 
         db = await Database.loadFromStorage();
 
@@ -758,8 +759,14 @@
 
     /*==================== KPIs AUTOMÁTICOS ====================*/
 
+    // Guarda as linhas usadas no último render, pra poder recalcular o
+    // breakdown de um card sem precisar re-filtrar tudo de novo ao clicar.
+    let lastKpiRows = [];
+
     function renderKPIs(rows) {
         if (!els.kpiRow) return;
+
+        lastKpiRows = rows;
 
         const moneyCol = currentSheet.resolveColumn("money");
         const serviceCostCol = currentSheet.resolveColumn("serviceCost");
@@ -780,7 +787,8 @@
             money.push({
                 label: "Faturamento Total",
                 value: Utils.formatMoney(Statistics.sum(rows, moneyCol)),
-                type: "positive"
+                type: "positive",
+                column: moneyCol // clicável: abre o detalhamento do que compõe este total
             });
             money.push({
                 label: "Ticket Médio por O.S",
@@ -793,7 +801,8 @@
             money.push({
                 label: "Custo de Serviço (Total)",
                 value: Utils.formatMoney(Statistics.sum(rows, serviceCostCol)),
-                type: "negative"
+                type: "negative",
+                column: serviceCostCol
             });
         }
 
@@ -801,7 +810,8 @@
             money.push({
                 label: "Custo de Peças (Total)",
                 value: Utils.formatMoney(Statistics.sum(rows, partsCostCol)),
-                type: "negative"
+                type: "negative",
+                column: partsCostCol
             });
         }
 
@@ -848,12 +858,321 @@
 
         const cards = [...money, ...counting, ...percentual, ...others];
 
-        els.kpiRow.innerHTML = cards.map(c => `
-            <div class="kpi-card kpi-${c.type}">
-                <span class="kpi-label">${c.label}</span>
+        els.kpiRow.innerHTML = cards.map(c => {
+            const clickable = !!c.column;
+            return `
+            <div class="kpi-card kpi-${c.type}${clickable ? " kpi-clickable" : ""}"
+                 ${clickable ? `data-kpi-column="${escapeHtml(c.column)}" data-kpi-label="${escapeHtml(c.label)}" tabindex="0" role="button"` : ""}>
+                <span class="kpi-label">${c.label}${clickable ? '<span class="kpi-expand-hint">Ver composição ›</span>' : ""}</span>
                 <span class="kpi-value">${c.value}</span>
             </div>
+        `;
+        }).join("");
+    }
+
+    /*==================== DETALHAMENTO DE KPI (modal) ==================
+      Ao clicar num card de KPI monetário (soma), mostra:
+      1) Componentes — outras colunas de valor/custo desta aba, para dar
+         contexto de como o total se relaciona com elas.
+      2) Agrupamento — quanto cada categoria (cliente, categoria, mês)
+         contribui para aquele total, com abas pra trocar a dimensão.
+    ======================================================================*/
+
+    const MONEY_LIKE_ROLES = new Set(["money", "serviceCost", "partsCost"]);
+    const BLANK_HEADER_RX = /^Coluna_\d+(_\d+)?$/i;
+
+    let kpiModalState = null; // { column, label, rows, groupDims, activeDim }
+
+    function wireKpiBreakdown() {
+        if (!els.kpiRow) return;
+        els.kpiRow.addEventListener("click", e => {
+            const card = e.target.closest(".kpi-card[data-kpi-column]");
+            if (!card) return;
+            openKpiBreakdown(card.dataset.kpiColumn, card.dataset.kpiLabel);
+        });
+        els.kpiRow.addEventListener("keydown", e => {
+            if (e.key !== "Enter" && e.key !== " ") return;
+            const card = e.target.closest(".kpi-card[data-kpi-column]");
+            if (!card) return;
+            e.preventDefault();
+            openKpiBreakdown(card.dataset.kpiColumn, card.dataset.kpiLabel);
+        });
+        document.addEventListener("keydown", e => {
+            if (e.key === "Escape" && kpiModalState) closeKpiBreakdown();
+        });
+    }
+
+    function monthBucketLabel(date) {
+        const meses = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+        return `${meses[date.getMonth()]}/${date.getFullYear()}`;
+    }
+
+    /** Soma `valueCol` agrupando pelas categorias de `dimCol` (ou por mês, se isDate). */
+    function groupSumBy(rows, valueCol, dimCol, isDate) {
+        const groups = new Map();
+        for (const row of rows) {
+            let key;
+            if (isDate) {
+                const d = Utils.parseDateSmart(row[dimCol]);
+                key = d ? monthBucketLabel(d) : "(sem data)";
+            } else {
+                const v = row[dimCol];
+                key = (v === null || v === undefined || v === "") ? "(vazio)" : String(v);
+            }
+            const n = Utils.parseNumberSmart(row[valueCol]) || 0;
+            groups.set(key, (groups.get(key) || 0) + n);
+        }
+        return [...groups.entries()]
+            .map(([label, sum]) => ({ label, sum }))
+            .sort((a, b) => b.sum - a.sum);
+    }
+
+    /** Mantém as top N entradas e agrupa o resto em "Outros". */
+    function bucketTop(list, topN) {
+        if (list.length <= topN) return list;
+        const top = list.slice(0, topN);
+        const rest = list.slice(topN);
+        const restSum = rest.reduce((s, r) => s + r.sum, 0);
+        top.push({ label: `Outros (${rest.length})`, sum: restSum });
+        return top;
+    }
+
+    /** Descobre as colunas que atuam como "peças" da composição de um total
+     *  monetário (ex.: Mão de Obra + Peças formam o Faturamento). Só faz
+     *  sentido para o total COMPOSTO em si (o papel "money"/Faturamento) —
+     *  se a coluna clicada já É um dos componentes (Custo de Serviço,
+     *  Custo de Peças), não existe uma decomposição mais "de baixo" pra
+     *  mostrar, então cai no modo de comparação. */
+    function findComponentColumns(targetColumn) {
+        const moneyCol = currentSheet.resolveColumn("money");
+        if (targetColumn !== moneyCol) return [];
+
+        const serviceCol = currentSheet.resolveColumn("serviceCost");
+        const partsCol = currentSheet.resolveColumn("partsCost");
+        return [serviceCol, partsCol].filter(c => c && c !== targetColumn);
+    }
+
+    /**
+     * Decompõe `total` linha a linha: para cada registro, verifica se a
+     * soma dos componentes (ex.: M.O Total + Peças Total) bate com o
+     * valor da coluna alvo (ex.: Valor a Faturar) naquela linha. Quando
+     * bate, o valor de cada componente entra na sua própria soma; quando
+     * não bate (ex.: valor lançado manualmente, sem seguir a composição
+     * padrão), o valor da linha inteira entra num balde à parte, deixando
+     * isso visível em vez de escondido dentro de uma soma que não fecha.
+     *
+     * Resultado: as partes retornadas sempre somam (a centavos de
+     * arredondamento) o total clicado — é uma decomposição de verdade,
+     * não só colunas parecidas mostradas lado a lado.
+     */
+    function decomposeByComponents(targetColumn, componentCols, rows) {
+        const componentSums = componentCols.map(() => 0);
+        let adjustmentSum = 0;
+        let adjustmentCount = 0;
+
+        for (const row of rows) {
+            const target = Utils.parseNumberSmart(row[targetColumn]) || 0;
+            const compVals = componentCols.map(c => Utils.parseNumberSmart(row[c]) || 0);
+            const compSum = compVals.reduce((a, b) => a + b, 0);
+            const tolerance = Math.max(1, Math.abs(target) * 0.01); // 1% ou R$1, o que for maior
+
+            if (Math.abs(compSum - target) <= tolerance) {
+                compVals.forEach((v, i) => { componentSums[i] += v; });
+            } else {
+                adjustmentSum += target;
+                adjustmentCount++;
+            }
+        }
+
+        const parts = componentCols.map((c, i) => ({
+            label: prettify(c),
+            sum: componentSums[i],
+            kind: "component"
+        }));
+
+        if (adjustmentCount > 0) {
+            parts.push({
+                label: `Ajustes manuais / sem decomposição padrão (${adjustmentCount} registro${adjustmentCount > 1 ? "s" : ""})`,
+                sum: adjustmentSum,
+                kind: "adjustment"
+            });
+        }
+
+        return parts;
+    }
+
+    /** Descobre quais dimensões fazem sentido pra agrupar nesta aba (cliente/categoria/mês). */
+    function findGroupingDimensions() {
+        const dims = [];
+
+        const entityCol = currentSheet.resolveColumn("entityName");
+        if (entityCol) dims.push({ key: "entity", label: prettify(entityCol), column: entityCol, isDate: false });
+
+        const statusCol = currentSheet.resolveColumn("status");
+        if (statusCol) dims.push({ key: "status", label: prettify(statusCol), column: statusCol, isDate: false });
+
+        // Qualquer outra coluna categórica de baixa cardinalidade (mesmo
+        // critério usado pelos filtros automáticos), como uma segunda opção
+        // de categoria além de status — útil quando a aba não tem "status"
+        // mas tem, por exemplo, "TIPO DE MANUTENÇÃO".
+        if (!statusCol) {
+            for (const colInfo of currentSheet.getColumnRoles()) {
+                const col = colInfo.column;
+                if (MONEY_LIKE_ROLES.has(colInfo.role)) continue;
+                if (BLANK_HEADER_RX.test(col)) continue;
+                if (dims.some(d => d.column === col)) continue;
+                const uniq = currentSheet.unique(col);
+                if (uniq.length >= 2 && uniq.length <= 30) {
+                    dims.push({ key: "category", label: prettify(col), column: col, isDate: false });
+                    break;
+                }
+            }
+        }
+
+        const dateCol = currentSheet.resolveColumn("date");
+        if (dateCol) dims.push({ key: "month", label: "Mês", column: dateCol, isDate: true });
+
+        return dims;
+    }
+
+    function openKpiBreakdown(column, label) {
+        const dims = findGroupingDimensions();
+        kpiModalState = {
+            column,
+            label,
+            rows: lastKpiRows,
+            groupDims: dims,
+            activeDim: dims.length ? 0 : -1
+        };
+        renderKpiModal();
+    }
+
+    function closeKpiBreakdown() {
+        kpiModalState = null;
+        const el = document.getElementById("kpiModalOverlay");
+        if (el) el.remove();
+    }
+
+    function renderKpiModal() {
+        if (!kpiModalState) return;
+        const { column, label, rows } = kpiModalState;
+
+        const total = Statistics.sum(rows, column);
+
+        // --- Seção 1: composição real (linha a linha) quando existem
+        // colunas de componente conhecidas (M.O/Peças); senão, cai pra
+        // uma comparação simples com outras colunas de valor da aba.
+        const componentCols = findComponentColumns(column);
+
+        let relatedRows, relatedNote;
+        if (componentCols.length) {
+            const parts = decomposeByComponents(column, componentCols, rows);
+            relatedRows = [{ label, sum: total, isTotal: true }, ...parts.map(p => ({
+                label: p.label, sum: p.sum, isAdjustment: p.kind === "adjustment"
+            }))];
+            relatedNote = `<p class="kpi-breakdown-hint">As partes abaixo somam (a centavos de arredondamento) o total — é a decomposição real, linha a linha, não uma comparação solta.</p>`;
+        } else {
+            const relatedCols = currentSheet.getColumnRoles()
+                .filter(c => MONEY_LIKE_ROLES.has(c.role) && c.column !== column && !BLANK_HEADER_RX.test(c.column));
+
+            relatedRows = [{ label, sum: total, isTotal: true }];
+            for (const c of relatedCols) {
+                const s = Statistics.sum(rows, c.column);
+                const hasData = rows.some(r => r[c.column] !== null && r[c.column] !== undefined);
+                if (hasData) relatedRows.push({ label: prettify(c.column), sum: s });
+            }
+            relatedNote = relatedRows.length > 1
+                ? `<p class="kpi-breakdown-hint">Esta aba não tem colunas de componente conhecidas para este total, então isto é uma comparação com outras colunas de valor (não somam necessariamente ao total).</p>`
+                : `<p class="kpi-breakdown-hint">Não há outras colunas de valor nesta aba para comparar.</p>`;
+        }
+
+        const maxRelated = Math.max(1, ...relatedRows.map(r => Math.abs(r.sum)));
+
+        const relatedHtml = relatedRows.map(r => `
+            <div class="kpi-breakdown-row">
+                <span class="kpi-breakdown-label">${r.label}</span>
+                <div class="kpi-breakdown-bar-track">
+                    <div class="kpi-breakdown-bar ${r.isTotal ? "kpi-breakdown-bar-total" : ""} ${r.isAdjustment ? "kpi-breakdown-bar-adjustment" : ""}"
+                         style="width:${Math.min(100, Math.abs(r.sum) / maxRelated * 100)}%"></div>
+                </div>
+                <span class="kpi-breakdown-value">${Utils.formatMoney(r.sum)}</span>
+            </div>
         `).join("");
+
+        // --- Seção 2: agrupamento por categoria ---
+        const { groupDims, activeDim } = kpiModalState;
+        const tabsHtml = groupDims.map((d, i) => `
+            <button type="button" class="kpi-modal-tab ${i === activeDim ? "active" : ""}" data-dim-index="${i}">
+                ${d.label}
+            </button>
+        `).join("");
+
+        let groupHtml = `<p class="kpi-breakdown-hint">Esta aba não tem uma coluna categórica para agrupar.</p>`;
+        if (activeDim >= 0) {
+            const dim = groupDims[activeDim];
+            const grouped = bucketTop(groupSumBy(rows, column, dim.column, dim.isDate), 8);
+            const maxGroup = Math.max(1, ...grouped.map(g => Math.abs(g.sum)));
+            groupHtml = grouped.map(g => `
+                <div class="kpi-breakdown-row">
+                    <span class="kpi-breakdown-label">${escapeHtml(g.label)}</span>
+                    <div class="kpi-breakdown-bar-track">
+                        <div class="kpi-breakdown-bar" style="width:${Math.min(100, Math.abs(g.sum) / maxGroup * 100)}%"></div>
+                    </div>
+                    <span class="kpi-breakdown-value">${Utils.formatMoney(g.sum)}</span>
+                </div>
+            `).join("");
+        }
+
+        let overlay = document.getElementById("kpiModalOverlay");
+        if (!overlay) {
+            overlay = document.createElement("div");
+            overlay.id = "kpiModalOverlay";
+            overlay.className = "kpi-modal-overlay";
+            document.body.appendChild(overlay);
+            overlay.addEventListener("click", e => {
+                if (e.target === overlay) closeKpiBreakdown();
+            });
+        }
+
+        overlay.innerHTML = `
+            <div class="kpi-modal" role="dialog" aria-modal="true" aria-label="Composição de ${escapeHtml(label)}">
+                <div class="kpi-modal-header">
+                    <div>
+                        <h3>${escapeHtml(label)}</h3>
+                        <span class="kpi-modal-total">${Utils.formatMoney(total)}</span>
+                    </div>
+                    <button type="button" class="kpi-modal-close" aria-label="Fechar">&times;</button>
+                </div>
+
+                <div class="kpi-modal-section">
+                    <h4>Composição</h4>
+                    ${relatedHtml}
+                    ${relatedNote}
+                </div>
+
+                <div class="kpi-modal-section">
+                    <h4>Agrupamento</h4>
+                    ${groupDims.length ? `<div class="kpi-modal-tabs">${tabsHtml}</div>` : ""}
+                    ${groupHtml}
+                </div>
+            </div>
+        `;
+
+        overlay.querySelector(".kpi-modal-close").addEventListener("click", closeKpiBreakdown);
+        overlay.querySelectorAll(".kpi-modal-tab").forEach(btn => {
+            btn.addEventListener("click", () => {
+                kpiModalState.activeDim = Number(btn.dataset.dimIndex);
+                renderKpiModal();
+            });
+        });
+    }
+
+    function escapeHtml(str) {
+        return String(str)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;");
     }
 
     /*==================== GRÁFICOS AUTOMÁTICOS ====================*/
