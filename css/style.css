@@ -705,7 +705,22 @@ input[type="number"]::-webkit-inner-spin-button {
     display: flex;
     flex-direction: column;
     gap: 20px;
+
+    /* mesma barra de rolagem discreta usada nos filtros (.ms-options) */
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
 }
+.kpi-modal::-webkit-scrollbar { width: 6px; }
+.kpi-modal::-webkit-scrollbar-track { background: transparent; }
+.kpi-modal::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 999px;
+}
+.kpi-modal::-webkit-scrollbar-thumb:hover { background: var(--text-faint); }
+
+/* Variante mais larga, usada pelo modal de detalhamento (tabela) de
+   Outros Lançamentos — 560px é estreito demais pra uma tabela de 4 colunas. */
+.kpi-modal.kpi-modal-wide { max-width: 900px; }
 
 .kpi-modal-header {
     display: flex;
@@ -777,6 +792,66 @@ input[type="number"]::-webkit-inner-spin-button {
     margin: 4px 0 0;
 }
 
+/* Tooltip customizado nas linhas do breakdown — mesmo visual escuro dos
+   tooltips do Chart.js (fundo #0B1220, borda var(--border), canto 8px). */
+.kpi-tooltip-wrap { position: relative; }
+
+.kpi-tooltip-box {
+    position: absolute;
+    left: 0;
+    bottom: calc(100% + 8px);
+    z-index: 20;
+    min-width: 200px;
+    max-width: 320px;
+    background: #0B1220;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+    padding: 10px 12px;
+    opacity: 0;
+    transform: translateY(4px);
+    pointer-events: none;
+    transition: opacity .12s ease, transform .12s ease;
+}
+.kpi-tooltip-wrap:hover .kpi-tooltip-box {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.kpi-tooltip-title {
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 6px;
+    white-space: normal;
+    word-break: break-word;
+}
+
+.kpi-tooltip-line {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 12px;
+    color: var(--text-soft);
+    padding: 2px 0;
+    white-space: normal;
+}
+.kpi-tooltip-line span:first-child {
+    color: var(--text-soft);
+    word-break: break-word;
+}
+.kpi-tooltip-line span:last-child {
+    color: var(--text);
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.kpi-tooltip-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 6px 0;
+}
+
 .kpi-modal-tabs {
     display: flex;
     flex-wrap: wrap;
@@ -798,6 +873,45 @@ input[type="number"]::-webkit-inner-spin-button {
     color: #fff;
 }
 
+/* Busca + tabela dentro do modal (usado pelo detalhamento de Outros
+   Lançamentos — lista completa, sem limite de amostras). */
+.kpi-modal-search {
+    width: 100%;
+    background: var(--bg-surface-soft);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    padding: 9px 12px;
+    font-size: 13px;
+    margin-bottom: 12px;
+}
+.kpi-modal-search::placeholder { color: var(--text-faint); }
+
+.kpi-modal-table-scroll {
+    max-height: 360px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+}
+.kpi-modal-table-scroll table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.kpi-modal-table-scroll thead th {
+    position: sticky; top: 0;
+    background: var(--bg-surface-soft);
+    color: var(--text-soft);
+    text-align: left;
+    font-weight: 700;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border);
+}
+.kpi-modal-table-scroll td { padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--text); }
+.kpi-modal-table-scroll td.num { text-align: right; font-weight: 600; white-space: nowrap; }
+.kpi-modal-table-scroll tbody tr:last-child td { border-bottom: none; }
+.kpi-modal-table-scroll tbody tr:hover td { background: var(--bg-surface-soft); }
+
+.kpi-modal-table-empty { padding: 24px; text-align: center; color: var(--text-faint); font-size: 13px; }
+
 /*==================== GRÁFICOS ====================*/
 
 .charts-grid {
@@ -818,6 +932,29 @@ input[type="number"]::-webkit-inner-spin-button {
 
 .chart-card h3 { margin: 0 0 14px; font-size: 14.5px; font-weight: 700; color: var(--text); }
 .chart-wrap { height: 280px; position: relative; }
+
+/* Cabeçalho do card com botão de ação (ex: "Ver detalhes" em Outros Lançamentos) */
+.chart-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+.chart-card-header h3 { margin: 0; }
+.chart-card-details-btn {
+    background: var(--bg-surface-soft);
+    border: 1px solid var(--border);
+    color: var(--text-soft);
+    border-radius: var(--radius-sm);
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.chart-card-details-btn:hover { color: var(--text); border-color: var(--accent-blue); }
 
 /* Gráfico grande ocupa a linha inteira (equivalente a 3 pequenos lado a lado) */
 .chart-card-wide { grid-column: 1 / -1; }

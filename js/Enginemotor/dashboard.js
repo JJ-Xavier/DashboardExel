@@ -801,8 +801,9 @@
             money.push({
                 label: "Custo de Serviço (Total)",
                 value: Utils.formatMoney(Statistics.sum(rows, serviceCostCol)),
-                type: "negative",
-                column: serviceCostCol
+                type: "negative"
+                // sem `column`: não é clicável — a composição só faz
+                // sentido no total (Faturamento), não nos componentes.
             });
         }
 
@@ -810,8 +811,25 @@
             money.push({
                 label: "Custo de Peças (Total)",
                 value: Utils.formatMoney(Statistics.sum(rows, partsCostCol)),
-                type: "negative",
-                column: partsCostCol
+                type: "negative"
+            });
+        }
+
+        // "Outros Valores" — tudo que compõe o Faturamento além de Serviço
+        // e Peças (mesma reconciliação linha a linha usada no gráfico
+        // "Outros Lançamentos" e no modal de composição do Faturamento
+        // Total), pra o valor bater igual nos três lugares.
+        if (moneyCol && (serviceCostCol || partsCostCol)) {
+            const otherComponentCols = [serviceCostCol, partsCostCol].filter(Boolean);
+            const otherParts = decomposeByComponents(moneyCol, otherComponentCols, rows);
+            const otherAdjustment = otherParts.find(p => p.kind === "adjustment");
+            money.push({
+                label: "Outros Valores",
+                value: Utils.formatMoney(otherAdjustment ? otherAdjustment.sum : 0),
+                type: "neutral"
+                // sem `column`: mesmo critério das outras duas — não é
+                // clicável aqui; o detalhamento fica no botão "Ver
+                // detalhes" do gráfico "Outros Lançamentos".
             });
         }
 
@@ -825,18 +843,6 @@
             counting.push({
                 label: prettify(entityCol) + "s Únicos",
                 value: Utils.formatNumber(Statistics.uniqueValues(rows, entityCol).length),
-                type: "neutral"
-            });
-        }
-
-        if (serviceCostCol && partsCostCol) {
-            const sService = Statistics.sum(rows, serviceCostCol);
-            const sParts = Statistics.sum(rows, partsCostCol);
-            const totalSP = sService + sParts;
-            const pctService = totalSP ? (sService / totalSP) * 100 : 0;
-            percentual.push({
-                label: "% Serviço sobre Serviço+Peças",
-                value: `${Utils.formatNumber(pctService, 1)}%`,
                 type: "neutral"
             });
         }
@@ -967,8 +973,12 @@
      */
     function decomposeByComponents(targetColumn, componentCols, rows) {
         const componentSums = componentCols.map(() => 0);
+        const serviceOrderCol = currentSheet.resolveColumn("serviceOrder");
+        const entityCol = currentSheet.resolveColumn("entityName");
+
         let adjustmentSum = 0;
         let adjustmentCount = 0;
+        const adjustmentSamples = [];
 
         for (const row of rows) {
             const target = Utils.parseNumberSmart(row[targetColumn]) || 0;
@@ -981,6 +991,17 @@
             } else {
                 adjustmentSum += target;
                 adjustmentCount++;
+
+                // Guarda uma identificação (O.S / cliente) de cada linha que
+                // caiu nesse balde, pra dar contexto no hover — em vez de um
+                // valor anônimo, dá pra ver exatamente de onde ele veio.
+                const idParts = [];
+                if (serviceOrderCol && row[serviceOrderCol] != null && row[serviceOrderCol] !== "") {
+                    idParts.push(`OS ${row[serviceOrderCol]}`);
+                }
+                if (entityCol && row[entityCol]) idParts.push(String(row[entityCol]));
+                const idLabel = idParts.length ? idParts.join(" — ") : `Registro sem identificação`;
+                adjustmentSamples.push({ label: idLabel, value: target });
             }
         }
 
@@ -991,10 +1012,12 @@
         }));
 
         if (adjustmentCount > 0) {
+            adjustmentSamples.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
             parts.push({
-                label: `Ajustes manuais / sem decomposição padrão (${adjustmentCount} registro${adjustmentCount > 1 ? "s" : ""})`,
+                label: `Outros Lançamentos (${adjustmentCount} registro${adjustmentCount > 1 ? "s" : ""})`,
                 sum: adjustmentSum,
-                kind: "adjustment"
+                kind: "adjustment",
+                samples: adjustmentSamples.slice(0, 12)
             });
         }
 
@@ -1068,7 +1091,7 @@
         if (componentCols.length) {
             const parts = decomposeByComponents(column, componentCols, rows);
             relatedRows = [{ label, sum: total, isTotal: true }, ...parts.map(p => ({
-                label: p.label, sum: p.sum, isAdjustment: p.kind === "adjustment"
+                label: p.label, sum: p.sum, isAdjustment: p.kind === "adjustment", samples: p.samples
             }))];
             relatedNote = `<p class="kpi-breakdown-hint">As partes abaixo somam (a centavos de arredondamento) o total — é a decomposição real, linha a linha, não uma comparação solta.</p>`;
         } else {
@@ -1088,16 +1111,53 @@
 
         const maxRelated = Math.max(1, ...relatedRows.map(r => Math.abs(r.sum)));
 
-        const relatedHtml = relatedRows.map(r => `
+        /**
+         * Monta uma linha do breakdown com um tooltip customizado no
+         * mesmo estilo escuro usado nos tooltips do Chart.js — em vez do
+         * tooltip nativo do navegador (que corta texto e não dá pra
+         * estilizar). Mostra sempre o nome completo (útil quando o rótulo
+         * é cortado com "…" na tela) e, se houver amostras (linhas que
+         * caíram em "Outros Lançamentos"), lista os maiores valores.
+         */
+        function buildBreakdownRow(r, maxScale, extraBarClass) {
+            const pct = Math.min(100, Math.abs(r.sum) / maxScale * 100);
+
+            // "Outros Lançamentos" fica sem tooltip — só a barra e o valor.
+            if (r.isAdjustment) {
+                return `
             <div class="kpi-breakdown-row">
-                <span class="kpi-breakdown-label">${r.label}</span>
+                <span class="kpi-breakdown-label">${escapeHtml(r.label)}</span>
                 <div class="kpi-breakdown-bar-track">
-                    <div class="kpi-breakdown-bar ${r.isTotal ? "kpi-breakdown-bar-total" : ""} ${r.isAdjustment ? "kpi-breakdown-bar-adjustment" : ""}"
-                         style="width:${Math.min(100, Math.abs(r.sum) / maxRelated * 100)}%"></div>
+                    <div class="kpi-breakdown-bar ${extraBarClass || ""}" style="width:${pct}%"></div>
                 </div>
                 <span class="kpi-breakdown-value">${Utils.formatMoney(r.sum)}</span>
             </div>
-        `).join("");
+        `;
+            }
+
+            const sampleLines = (r.samples || [])
+                .map(s => `<div class="kpi-tooltip-line"><span>${escapeHtml(s.label)}</span><span>${Utils.formatMoney(s.value)}</span></div>`)
+                .join("");
+
+            return `
+            <div class="kpi-breakdown-row kpi-tooltip-wrap">
+                <span class="kpi-breakdown-label">${escapeHtml(r.label)}</span>
+                <div class="kpi-breakdown-bar-track">
+                    <div class="kpi-breakdown-bar ${extraBarClass || ""}" style="width:${pct}%"></div>
+                </div>
+                <span class="kpi-breakdown-value">${Utils.formatMoney(r.sum)}</span>
+                <div class="kpi-tooltip-box">
+                    <div class="kpi-tooltip-title">${escapeHtml(r.label)}</div>
+                    <div class="kpi-tooltip-line"><span>Valor</span><span>${Utils.formatMoney(r.sum)}</span></div>
+                    ${sampleLines ? `<div class="kpi-tooltip-divider"></div>${sampleLines}` : ""}
+                </div>
+            </div>
+        `;
+        }
+
+        const relatedHtml = relatedRows.map(r => buildBreakdownRow(
+            r, maxRelated, `${r.isTotal ? "kpi-breakdown-bar-total" : ""} ${r.isAdjustment ? "kpi-breakdown-bar-adjustment" : ""}`
+        )).join("");
 
         // --- Seção 2: agrupamento por categoria ---
         const { groupDims, activeDim } = kpiModalState;
@@ -1112,15 +1172,7 @@
             const dim = groupDims[activeDim];
             const grouped = bucketTop(groupSumBy(rows, column, dim.column, dim.isDate), 8);
             const maxGroup = Math.max(1, ...grouped.map(g => Math.abs(g.sum)));
-            groupHtml = grouped.map(g => `
-                <div class="kpi-breakdown-row">
-                    <span class="kpi-breakdown-label">${escapeHtml(g.label)}</span>
-                    <div class="kpi-breakdown-bar-track">
-                        <div class="kpi-breakdown-bar" style="width:${Math.min(100, Math.abs(g.sum) / maxGroup * 100)}%"></div>
-                    </div>
-                    <span class="kpi-breakdown-value">${Utils.formatMoney(g.sum)}</span>
-                </div>
-            `).join("");
+            groupHtml = grouped.map(g => buildBreakdownRow(g, maxGroup)).join("");
         }
 
         let overlay = document.getElementById("kpiModalOverlay");
@@ -1205,6 +1257,32 @@
                 })
             );
             chartCount++;
+        }
+
+        // 1b) OUTROS LANÇAMENTOS — usa a MESMA lógica de reconciliação do
+        // modal de composição do KPI "Faturamento Total" (decomposeByComponents):
+        // para cada linha, se Serviço + Peças não bater com o Faturamento
+        // daquela linha (tolerância de 1% ou R$1), o valor inteiro da linha
+        // cai no balde "Outros Lançamentos" (taxa/markup aplicada fora do
+        // padrão, franquias, ajustes manuais etc.). Mantém o número deste
+        // gráfico sempre igual ao que aparece ao clicar no KPI.
+        if (moneyCol && dateCol && (serviceCostCol || partsCostCol)) {
+            const componentCols = [serviceCostCol, partsCostCol].filter(Boolean);
+            addChartCanvas("chartOtherEntries", "Outros Lançamentos (Evolução Mensal)", { wide: true, detailsButtonLabel: "Ver detalhes" });
+            const trendOthers = groupByMonthAdjustments(rows, dateCol, moneyCol, componentCols);
+            requestAnimationFrame(() =>
+                Charts.bar("chartOtherEntries", {
+                    label: "Outros Lançamentos",
+                    labels: trendOthers.map(t => t.label),
+                    values: trendOthers.map(t => t.value)
+                })
+            );
+            chartCount++;
+
+            const otherEntriesBtn = document.getElementById("chartOtherEntriesDetailsBtn");
+            if (otherEntriesBtn) {
+                otherEntriesBtn.addEventListener("click", () => openOtherEntriesModal(rows, dateCol, moneyCol, componentCols));
+            }
         }
 
         // 2) SERVIÇO x PEÇAS — proporção total + evolução mensal comparada.
@@ -1308,7 +1386,12 @@
     function addChartCanvas(id, title, opts = {}) {
         const card = document.createElement("div");
         card.className = opts.wide ? "chart-card chart-card-wide" : "chart-card";
-        card.innerHTML = `<h3>${title}</h3><div class="chart-wrap"><canvas id="${id}"></canvas></div>`;
+
+        const headerHtml = opts.detailsButtonLabel
+            ? `<div class="chart-card-header"><h3>${title}</h3><button type="button" class="chart-card-details-btn" id="${id}DetailsBtn">${opts.detailsButtonLabel}</button></div>`
+            : `<h3>${title}</h3>`;
+
+        card.innerHTML = `${headerHtml}<div class="chart-wrap"><canvas id="${id}"></canvas></div>`;
         els.chartsGrid.appendChild(card);
     }
 
@@ -1337,6 +1420,176 @@
             .sort((a, b) => a[0].localeCompare(b[0]))
             .map(([label, value]) => ({ label, value }));
     }
+
+    /**
+     * Igual a groupByMonth, mas em vez de somar uma coluna fixa, aplica
+     * por LINHA a mesma reconciliação usada em decomposeByComponents:
+     * soma os componentes (ex.: M.O Total + Peças Total) e compara com o
+     * valor alvo (ex.: Valor a Faturar) daquela linha. Quando a diferença
+     * ultrapassa a tolerância (1% ou R$1, o que for maior), o valor
+     * INTEIRO da linha (não só a diferença) entra no mês correspondente —
+     * exatamente o critério de "Outros Lançamentos" do modal de KPI.
+     */
+    function groupByMonthAdjustments(rows, dateCol, targetCol, componentCols) {
+        const map = new Map();
+        rows.forEach(r => {
+            const d = Utils.parseDateSmart(r[dateCol]);
+            if (!d) return;
+
+            const target = Utils.parseNumberSmart(r[targetCol]) || 0;
+            const compSum = componentCols.reduce((acc, c) => acc + (Utils.parseNumberSmart(r[c]) || 0), 0);
+            const tolerance = Math.max(1, Math.abs(target) * 0.01);
+            if (Math.abs(compSum - target) <= tolerance) return; // bate com Serviço+Peças, não é "outro lançamento"
+
+            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+            map.set(key, (map.get(key) || 0) + target);
+        });
+        return [...map.entries()]
+            .sort((a, b) => a[0].localeCompare(b[0]))
+            .map(([label, value]) => ({ label, value }));
+    }
+
+    /*==================== MODAL: DETALHAMENTO DE OUTROS LANÇAMENTOS ====================
+      Botão "Ver detalhes" no card do gráfico. Lista TODAS as linhas que
+      caíram no critério de "Outros Lançamentos" (mesma reconciliação de
+      groupByMonthAdjustments/decomposeByComponents), sem limite de
+      amostras — com busca e exportação CSV.
+    ======================================================================*/
+
+    let otherEntriesModalState = null; // { allRows, search }
+
+    /** Lista (não agregada) de todas as linhas que caem em "Outros Lançamentos". */
+    function getAdjustmentRows(rows, dateCol, targetCol, componentCols) {
+        const serviceOrderCol = currentSheet.resolveColumn("serviceOrder");
+        const entityCol = currentSheet.resolveColumn("entityName");
+        const list = [];
+
+        rows.forEach(r => {
+            const d = Utils.parseDateSmart(r[dateCol]);
+            if (!d) return;
+
+            const target = Utils.parseNumberSmart(r[targetCol]) || 0;
+            const compSum = componentCols.reduce((acc, c) => acc + (Utils.parseNumberSmart(r[c]) || 0), 0);
+            const tolerance = Math.max(1, Math.abs(target) * 0.01);
+            if (Math.abs(compSum - target) <= tolerance) return;
+
+            list.push({
+                monthKey: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`,
+                monthLabel: monthBucketLabel(d),
+                os: (serviceOrderCol && r[serviceOrderCol] != null && r[serviceOrderCol] !== "") ? String(r[serviceOrderCol]) : "-",
+                cliente: (entityCol && r[entityCol]) ? String(r[entityCol]) : "-",
+                valor: target
+            });
+        });
+
+        return list.sort((a, b) => a.monthKey.localeCompare(b.monthKey) || Math.abs(b.valor) - Math.abs(a.valor));
+    }
+
+    function openOtherEntriesModal(rows, dateCol, moneyCol, componentCols) {
+        otherEntriesModalState = {
+            allRows: getAdjustmentRows(rows, dateCol, moneyCol, componentCols),
+            search: ""
+        };
+        renderOtherEntriesModal();
+    }
+
+    function closeOtherEntriesModal() {
+        otherEntriesModalState = null;
+        const el = document.getElementById("otherEntriesModalOverlay");
+        if (el) el.remove();
+    }
+
+    function renderOtherEntriesModal() {
+        if (!otherEntriesModalState) return;
+        const { allRows, search } = otherEntriesModalState;
+
+        const term = search.trim().toLowerCase();
+        const filtered = term
+            ? allRows.filter(r =>
+                r.os.toLowerCase().includes(term) ||
+                r.cliente.toLowerCase().includes(term) ||
+                r.monthLabel.toLowerCase().includes(term))
+            : allRows;
+
+        const total = filtered.reduce((s, r) => s + r.valor, 0);
+
+        const rowsHtml = filtered.length
+            ? filtered.map(r => `
+                <tr>
+                    <td>${escapeHtml(r.monthLabel)}</td>
+                    <td>${escapeHtml(r.os)}</td>
+                    <td>${escapeHtml(r.cliente)}</td>
+                    <td class="num">${Utils.formatMoney(r.valor)}</td>
+                </tr>
+            `).join("")
+            : `<tr><td colspan="4" class="kpi-modal-table-empty">Nenhum lançamento encontrado.</td></tr>`;
+
+        let overlay = document.getElementById("otherEntriesModalOverlay");
+        if (!overlay) {
+            overlay = document.createElement("div");
+            overlay.id = "otherEntriesModalOverlay";
+            overlay.className = "kpi-modal-overlay";
+            document.body.appendChild(overlay);
+            overlay.addEventListener("click", e => {
+                if (e.target === overlay) closeOtherEntriesModal();
+            });
+        }
+
+        overlay.innerHTML = `
+            <div class="kpi-modal kpi-modal-wide" role="dialog" aria-modal="true" aria-label="Detalhamento de Outros Lançamentos">
+                <div class="kpi-modal-header">
+                    <div>
+                        <h3>Outros Lançamentos — Detalhamento</h3>
+                        <span class="kpi-modal-total">${Utils.formatMoney(total)}</span>
+                    </div>
+                    <button type="button" class="kpi-modal-close" aria-label="Fechar">&times;</button>
+                </div>
+                <div class="kpi-modal-section">
+                    <input type="text" class="kpi-modal-search" id="otherEntriesSearch"
+                           placeholder="Buscar por O.S, cliente ou mês..." value="${escapeHtml(search)}">
+                    <div class="kpi-modal-table-scroll">
+                        <table>
+                            <thead><tr><th>Mês</th><th>O.S</th><th>Cliente</th><th>Valor</th></tr></thead>
+                            <tbody>${rowsHtml}</tbody>
+                        </table>
+                    </div>
+                    <p class="kpi-breakdown-hint">
+                        ${filtered.length} de ${allRows.length} registro${allRows.length !== 1 ? "s" : ""} —
+                        mesmo critério usado no gráfico e na composição do Faturamento Total.
+                    </p>
+                    <button type="button" class="btn-secondary" id="otherEntriesExportBtn" style="margin-top:12px;">
+                        Exportar CSV
+                    </button>
+                </div>
+            </div>
+        `;
+
+        overlay.querySelector(".kpi-modal-close").addEventListener("click", closeOtherEntriesModal);
+
+        const searchInput = overlay.querySelector("#otherEntriesSearch");
+        searchInput.addEventListener("input", () => {
+            const cursorPos = searchInput.selectionStart;
+            otherEntriesModalState.search = searchInput.value;
+            renderOtherEntriesModal();
+            const newInput = document.getElementById("otherEntriesSearch");
+            if (newInput) {
+                newInput.focus();
+                newInput.setSelectionRange(cursorPos, cursorPos);
+            }
+        });
+
+        overlay.querySelector("#otherEntriesExportBtn").addEventListener("click", () => {
+            exportCSV(
+                "outros_lancamentos.csv",
+                ["Mês", "O.S", "Cliente", "Valor"],
+                filtered.map(r => [r.monthLabel, r.os, r.cliente, r.valor.toFixed(2)])
+            );
+        });
+    }
+
+    document.addEventListener("keydown", e => {
+        if (e.key === "Escape" && otherEntriesModalState) closeOtherEntriesModal();
+    });
 
     /*==================== TABELA AUTOMÁTICA ====================*/
 
