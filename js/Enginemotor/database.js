@@ -25,7 +25,6 @@ class SheetAPI {
         this.columns = rawSheet.columns;
         this.analysis = rawSheet.analysis;
         this.statistics = rawSheet.statistics;
-        this.indexes = rawSheet.indexes;
 
         this._filterCache = new Map();
     }
@@ -154,6 +153,12 @@ class SheetAPI {
             });
         }
 
+        // O cache cresce a cada combinação nova de filtros; numa sessão
+        // longa filtrando uma aba grande (ex.: ~100 mil linhas), isso
+        // acumula arrays de referência sem limite. Um teto simples com
+        // limpeza total é suficiente aqui: o custo de recomputar um
+        // filtro é baixo perto do custo de segurar dezenas de resultados.
+        if (this._filterCache.size >= 50) this._filterCache.clear();
         this._filterCache.set(cacheKey, rows);
         return rows;
     }
@@ -194,7 +199,7 @@ class SheetAPI {
   dezenas de milhares de linhas exigem essa capacidade.
 
   Bônus: o algoritmo de clonagem estruturada do IndexedDB
-  serializa Map nativamente, então os índices (Indexer.buildIndexes)
+  serializa Date e Map nativamente, então os valores tipados
   sobrevivem ao save/load sem precisar de JSON.stringify/parse.
 ==============================================================*/
 

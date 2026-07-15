@@ -826,10 +826,35 @@
             money.push({
                 label: "Outros Valores",
                 value: Utils.formatMoney(otherAdjustment ? otherAdjustment.sum : 0),
-                type: "neutral"
+                type: "negative"
                 // sem `column`: mesmo critério das outras duas — não é
                 // clicável aqui; o detalhamento fica no botão "Ver
                 // detalhes" do gráfico "Outros Lançamentos".
+            });
+        }
+
+        // Cards de percentual — completa o que ficou pendente: o array
+        // `percentual` era declarado e mesclado no resultado final, mas
+        // nada nunca o preenchia. Para cada coluna de percentual da aba
+        // (ex.: "% Faturado manut"), mostra a MÉDIA no período filtrado.
+        // Percentuais armazenados como fração (0.65 = 65%) são detectados
+        // pelo máximo da coluna e escalados para exibição; colunas já em
+        // escala 0-100 são exibidas como estão.
+        const percentageCols = currentSheet.resolveColumns("percentage");
+        for (const pcol of percentageCols.slice(0, 2)) { // no máx. 2 cards, pra não inflar a linha
+            const vals = rows
+                .map(r => Utils.parseNumberSmart(r[pcol]))
+                .filter(v => v !== null && !isNaN(v));
+            if (!vals.length) continue;
+
+            const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+            const maxV = Math.max(...vals);
+            const displayValue = maxV <= 2 ? avg * 100 : avg; // fração -> %
+
+            percentual.push({
+                label: `${prettify(pcol)} (Média)`,
+                value: `${Utils.formatNumber(displayValue, 1)}%`,
+                type: "neutral"
             });
         }
 
@@ -1219,14 +1244,6 @@
         });
     }
 
-    function escapeHtml(str) {
-        return String(str)
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;")
-            .replace(/"/g, "&quot;");
-    }
-
     /*==================== GRÁFICOS AUTOMÁTICOS ====================*/
 
     function renderCharts(rows) {
@@ -1252,7 +1269,7 @@
             requestAnimationFrame(() =>
                 Charts.line("chartMonthlyRevenue", {
                     label: "Faturamento",
-                    labels: trend.map(t => t.label),
+                    labels: trend.map(t => formatMonthLabel(t.label)),
                     values: trend.map(t => t.value)
                 })
             );
@@ -1273,7 +1290,7 @@
             requestAnimationFrame(() =>
                 Charts.bar("chartOtherEntries", {
                     label: "Outros Lançamentos",
-                    labels: trendOthers.map(t => t.label),
+                    labels: trendOthers.map(t => formatMonthLabel(t.label)),
                     values: trendOthers.map(t => t.value)
                 })
             );
@@ -1307,7 +1324,7 @@
                 const partsMap = new Map(trendParts.map(t => [t.label, t.value]));
                 requestAnimationFrame(() =>
                     Charts.multiLine("chartServicePartsTrend", {
-                        labels: allLabels,
+                        labels: allLabels.map(formatMonthLabel),
                         series: [
                             { label: "Serviço", data: allLabels.map(l => serviceMap.get(l) || 0) },
                             { label: "Peças", data: allLabels.map(l => partsMap.get(l) || 0) }
@@ -1855,8 +1872,13 @@
         return colName.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
     }
 
+    /**
+     * Única definição de escapeHtml do arquivo (havia uma segunda cópia
+     * mais acima que esta sobrescrevia silenciosamente por hoisting).
+     * Coage para String antes de escapar, para aceitar números/null.
+     */
     function escapeHtml(s) {
-        return s.replace(/[&<>"']/g, c => ({
+        return String(s ?? "").replace(/[&<>"']/g, c => ({
             "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
         }[c]));
     }

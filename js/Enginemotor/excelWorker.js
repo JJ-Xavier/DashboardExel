@@ -2,7 +2,7 @@
   excelWorker.js
   Web Worker responsável por rodar TODO o pipeline pesado de
   importação (leitura do XLSX, parse de abas, análise semântica,
-  estatísticas e indexação) fora da thread principal.
+  e estatísticas) fora da thread principal.
 
   Motivo: em planilhas com milhares de linhas, esse pipeline
   inteiro rodando de forma síncrona na thread principal é o que
@@ -13,7 +13,7 @@
 
   Nenhuma lógica de negócio foi alterada: este arquivo só importa
   as mesmas classes/módulos já usados antes (Utils, Analyzer,
-  Statistics, Indexer, ExcelEngine) e delega pra elas.
+  Statistics, ExcelEngine) e delega pra elas.
 
   Protocolo de mensagens:
     main -> worker: { type: "import", file: File }
@@ -29,7 +29,6 @@ importScripts(
     "utils.js",
     "analyzer.js",
     "statistics.js",
-    "indexer.js",
     "excelEngine.js"
 );
 

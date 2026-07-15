@@ -79,7 +79,7 @@
       ambiente que bloqueie importScripts). Nesse caso o
       comportamento é exatamente o mesmo de antes desta mudança
       — nunca pior, só sem a garantia extra da Worker.
-      As dependências (XLSX, Analyzer, Indexer, ExcelEngine) só
+      As dependências (XLSX, Analyzer, ExcelEngine) só
       são carregadas aqui, sob demanda, porque no caminho normal
       (via Worker) elas não precisam estar na thread principal.
     --------------------------------------------------------*/
@@ -100,7 +100,6 @@
         if (!fallbackDepsPromise) {
             fallbackDepsPromise = loadScript("https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js")
                 .then(() => loadScript("js/Enginemotor/analyzer.js"))
-                .then(() => loadScript("js/Enginemotor/indexer.js"))
                 .then(() => loadScript("js/Enginemotor/excelEngine.js"));
         }
         return fallbackDepsPromise;

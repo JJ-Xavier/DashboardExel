@@ -7,12 +7,12 @@
       .import(file)  -> lê TODAS as abas, TODAS as colunas,
                          TODAS as linhas, detecta cabeçalho,
                          classifica colunas (Analyzer), gera
-                         estatísticas (Statistics), cria índices
-                         (Indexer), normaliza valores, e produz
-                         um objeto "Database" pronto para uso.
+                         estatísticas (Statistics), normaliza
+                         valores, e produz um objeto "Database"
+                         pronto para uso.
 
   Depende de: SheetJS (XLSX global, via CDN), Utils, Analyzer,
-  Statistics, Indexer.
+  Statistics.
 
   Não conhece nada sobre Dashboard. É uma biblioteca pura.
 ==============================================================*/
@@ -154,7 +154,7 @@ class ExcelEngine {
 
     /**
      * Converte uma worksheet do SheetJS em uma estrutura normalizada:
-     * { name, columns, rows, analysis, indexes, statistics }
+     * { name, columns, rows, analysis, statistics }
      */
     parseSheet(ws, name) {
         const matrix = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
@@ -216,7 +216,13 @@ class ExcelEngine {
         analysis.columns.forEach(c => {
             statistics[c.column] = Statistics.summarizeColumn(cleanRows, c.column, c.role);
         });
-        const indexes = Indexer.buildIndexes(cleanRows, analysis.roleMap);
+
+        // NOTA: os índices por papel (Indexer.buildIndexes) foram removidos
+        // do pipeline: eram construídos e persistidos no IndexedDB em toda
+        // importação (custo real de CPU/memória em abas de ~100 mil linhas)
+        // mas nenhum caminho de código consultava Indexer.lookup — filtros
+        // e busca sempre usaram scan linear via SheetAPI. Se um dia a
+        // filtragem precisar de lookup O(1), reintroduzir aqui.
 
         return {
             name,
@@ -224,8 +230,7 @@ class ExcelEngine {
             rowCount: cleanRows.length,
             rows: cleanRows,
             analysis,
-            statistics,
-            indexes
+            statistics
         };
     }
 

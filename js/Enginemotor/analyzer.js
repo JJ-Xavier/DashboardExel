@@ -96,7 +96,13 @@ const Analyzer = (() => {
         plate: v => /^[A-Za-z]{3}-?\d[A-Za-z0-9]\d{2}$/.test(String(v).replace(/\s/g, "")),
         phone: v => /^(\+?55)?\s?\(?\d{2}\)?\s?\d{4,5}-?\d{4}$/.test(String(v).replace(/\s/g, "")),
         email: v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v).trim()),
-        percentage: v => /%\s*$/.test(String(v).trim()) || (typeof v === "number" && v >= 0 && v <= 1),
+        // Percentuais armazenados como fração podem legitimamente passar de
+        // 100% (ex.: "% Faturado Sinistro" = faturado/despesa do dia, que
+        // fica acima de 1.0 quando o faturado supera a despesa). O teto de
+        // 1 rejeitava metade dos valores reais dessas colunas e derrubava
+        // o contentScore de percentual; teto 2 cobre esses casos sem abrir
+        // demais para contagens grandes.
+        percentage: v => /%\s*$/.test(String(v).trim()) || (typeof v === "number" && v >= 0 && v <= 2),
         // "id" é um papel MUITO genérico via conteúdo (qualquer texto
         // alfanumérico curto bate). Sem essa restrição de comprimento e
         // sem exigir evidência de nome (ver guarda mais abaixo), colunas
@@ -174,6 +180,16 @@ const Analyzer = (() => {
 
     const MONEY_ROLES = new Set(["money", "serviceCost", "partsCost"]);
 
+    // Tokens de nome que indicam CONTAGEM ou MEDIDA FÍSICA — nunca um
+    // valor em R$. Sem essa lista, colunas como "QTD MANUT PREVENTIVA E
+    // CORRETIVA" (contagem de manutenções) ou "KM" (odômetro) acabavam
+    // classificadas como custo/dinheiro só porque o conteúdo é numérico,
+    // e apareciam no dashboard formatadas como "R$ 29.730,00".
+    const NON_MONETARY_NAME_TOKENS = new Set([
+        "qtd", "qtde", "qde", "qdt", "quantidade", "contagem",
+        "km", "quilometragem", "odometro", "hodometro"
+    ]);
+
     /**
      * Pontua o quanto uma coluna (nome + amostra) combina com um papel.
      *
@@ -216,6 +232,13 @@ const Analyzer = (() => {
         if (role === "percentage") {
             const looksMonetary = /\bvalor\b/.test(nameNorm) || /\bsem\b/.test(nameNorm);
             if (looksMonetary) nameScore = Math.max(0, nameScore - 0.7);
+
+            // O símbolo "%" no próprio nome da coluna ("% Faturado manut")
+            // é a evidência mais direta possível de percentual — mais
+            // forte que qualquer sinônimo. Sem isso, essas colunas
+            // dependiam de similaridade fuzzy com "percentual"/"taxa",
+            // que quase nunca bate, e perdiam para papéis monetários.
+            if (/%/.test(nameNorm)) nameScore = Math.max(nameScore, 0.95);
         }
 
         if (MONEY_ROLES.has(role)) {
@@ -238,6 +261,28 @@ const Analyzer = (() => {
 
             if (hasTotal) nameScore = Math.min(1, nameScore + 0.15);
             if (hasTaxa && !hasTotal) nameScore = Math.max(0, nameScore - 0.35);
+
+            // "%" no nome indica percentual, não dinheiro ("% Faturado
+            // manut" estava vencendo como money porque contém "faturado").
+            if (/%/.test(nameNorm)) {
+                nameScore = Math.max(0, nameScore - 0.5);
+            }
+        }
+
+        // Nomes com token de contagem/medida física ("QTD ...", "QDT
+        // SINISTRO", "KM") nunca são dinheiro, ordem de serviço nem
+        // identificador — são contagens/medidas. A penalidade derruba o
+        // nameScore abaixo dos guards de evidência de nome logo abaixo.
+        // Vale para serviceOrder e id também (e não só papéis monetários)
+        // porque ambos são papéis-ÂNCORA do filtro de linhas fantasma do
+        // ExcelEngine e papéis indexáveis: uma contagem classificada como
+        // serviceOrder faria linhas legítimas com contagem vazia serem
+        // descartadas da planilha silenciosamente.
+        if (MONEY_ROLES.has(role) || role === "serviceOrder" || role === "id") {
+            const nameTokens = nameNorm.split(" ");
+            if (nameTokens.some(t => NON_MONETARY_NAME_TOKENS.has(t))) {
+                nameScore = Math.max(0, nameScore - 0.6);
+            }
         }
 
         // serviceCost, partsCost e id são papéis MUITO específicos (custo
@@ -250,6 +295,45 @@ const Analyzer = (() => {
         // que o conteúdo decida sozinho.
         if ((role === "serviceCost" || role === "partsCost" || role === "id") && nameScore < 0.15) {
             return { role, nameScore, contentScore: 0, combined: 0 };
+        }
+
+        // O testador de conteúdo de "money" aceita qualquer número finito —
+        // ou seja, para colunas de números "puros" (KM, contagens, seriais)
+        // o conteúdo NÃO diferencia dinheiro de outra coisa. Nesses casos,
+        // só marcadores explícitos nas células ("R$", decimal com vírgula
+        // no fim: "1.234,56") tornam o conteúdo informativo; sem eles,
+        // exige um mínimo de evidência de NOME antes de aceitar o papel.
+        // Foi isso que fazia "KM" (odômetro) virar money e aparecer como
+        // "R$ 29.730,00" na tabela de detalhamento.
+        if (role === "money") {
+            const hasMoneyMarkers = samples.some(v =>
+                typeof v === "string" && /r\$|\d,\d{2}\s*$/i.test(String(v).trim())
+            );
+            if (!hasMoneyMarkers && nameScore < 0.25) {
+                return { role, nameScore, contentScore: 0, combined: 0 };
+            }
+        }
+
+        // Mesmo raciocínio para serviceOrder: o testador aceita qualquer
+        // sequência de 2-10 dígitos, então números genéricos (KM, códigos)
+        // "passam". Só o prefixo "OS" explícito nos valores torna o
+        // conteúdo informativo por si só; caso contrário exige nome.
+        if (role === "serviceOrder" && nameScore < 0.15) {
+            const hasOsPrefix = samples.some(v => /^os[\-\s]?\d/i.test(String(v).trim()));
+            if (!hasOsPrefix) {
+                return { role, nameScore, contentScore: 0, combined: 0 };
+            }
+        }
+
+        // E para percentage: números entre 0 e 2 são também o formato de
+        // contagens pequenas (0, 1, 2 sinistros no dia...). Sem "%"
+        // explícito nas células, exige evidência forte de nome ("%" no
+        // nome, ou sinônimo como "taxa"/"percentual" com match de palavra).
+        if (role === "percentage" && nameScore < 0.4) {
+            const hasPercentMarkers = samples.some(v => /%\s*$/.test(String(v).trim()));
+            if (!hasPercentMarkers) {
+                return { role, nameScore, contentScore: 0, combined: 0 };
+            }
         }
 
         // sinal 2: conteúdo
@@ -270,14 +354,22 @@ const Analyzer = (() => {
             ? (nameScore * 0.35 + contentScore * 0.65) * (0.5 + 0.5 * specificity)
             : nameScore * (0.5 + 0.5 * specificity);
 
-        // Desempate: "VALOR A FATURAR" é semanticamente o total final da
-        // fatura (mais autoritativo que qualquer outra coluna chamada só
-        // de "TOTAL"). Aplicado como incremento pequeno e NÃO limitado
-        // pelo cap de nameScore, para garantir que sempre vença empates
-        // exatos contra colunas concorrentes do papel "money".
-        const finalCombined = (role === "money" && /faturar/.test(nameNorm))
-            ? combined + 0.02
-            : combined;
+        // Desempate para o papel "money": o dashboard usa a PRIMEIRA
+        // coluna money do roleMap como "Faturamento Total", então a ordem
+        // importa. Nomes com "fatur*" (faturar, faturado, faturamento) são
+        // semanticamente RECEITA e ganham um incremento pequeno; nomes com
+        // "despesa"/"custo" são o lado oposto e perdem o mesmo tanto.
+        // Sem isso, "VALOR DESPESA TOTAL NO DIA" e "VALOR TOTAL FATURADO
+        // NO DIA" empatavam exatamente (0.85) e quem vencia era a ordem
+        // física das colunas na planilha — e o card "Faturamento Total"
+        // das abas de resumo diário somava DESPESA em vez de faturamento.
+        // Incrementos aplicados após o cap de nameScore, de propósito,
+        // para desempatar empates exatos.
+        let finalCombined = combined;
+        if (role === "money") {
+            if (/fatur/.test(nameNorm)) finalCombined += 0.02;
+            if (/\bdespesa\b|\bcusto/.test(nameNorm)) finalCombined -= 0.02;
+        }
 
         return { role, nameScore, contentScore, combined: finalCombined };
     }

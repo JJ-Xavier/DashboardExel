@@ -127,16 +127,15 @@ const Filters = (() => {
 
     // Planilhas de RESUMO (uma linha = um dia agregado) não têm nenhuma
     // coluna categórica sobrando para filtrar por igualdade — só colunas
-    // numéricas (valores, contagens, percentuais). Nessas abas específicas,
-    // em vez de nenhum filtro além da data, geramos filtro de faixa
-    // (mínimo/máximo) para cada coluna numérica agregada. Fora dessa
-    // lista, colunas numéricas continuam sem filtro — a maioria das
-    // outras abas é "por registro" (uma OS, um cliente), onde faixa
-    // numérica tende a ser menos útil que os filtros categóricos normais.
-    const NUMERIC_RANGE_SHEETS = new Set([
-        "RESUMO POR DIA CARROS",
-        "RESUMO POR DIA MOTO"
-    ]);
+    // numéricas (valores, contagens, percentuais). Nessas abas, em vez de
+    // nenhum filtro além da data, geramos filtro de faixa (mínimo/máximo)
+    // para cada coluna numérica agregada. A detecção é ESTRUTURAL (a aba
+    // não gerou nenhum filtro de seleção categórico), não por nome fixo de
+    // aba — uma lista fixa como "RESUMO POR DIA CARROS" quebrava em
+    // silêncio se a aba fosse renomeada ou se outra planilha fosse
+    // importada. Nas demais abas ("por registro": uma OS, um cliente),
+    // colunas numéricas continuam sem filtro — faixa numérica tende a ser
+    // menos útil que os filtros categóricos normais que elas já têm.
     const NUMERIC_RANGE_ROLES = new Set(["money", "serviceCost", "partsCost", "number", "percentage"]);
 
     /**
@@ -197,7 +196,10 @@ const Filters = (() => {
             });
         }
 
-        if (NUMERIC_RANGE_SHEETS.has(sheetApi.name)) {
+        // Só gera faixas numéricas quando a aba não produziu NENHUM filtro
+        // de seleção categórico (assinatura de aba-resumo agregada).
+        const hasSelectFilters = controls.some(c => c.type === "select");
+        if (!hasSelectFilters) {
             for (const colInfo of columnRoles) {
                 const col = colInfo.column;
                 if (seen.has(col)) continue; // já é filtro de outro tipo
