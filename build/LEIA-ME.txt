@@ -1,0 +1,11 @@
+Coloque aqui o icone do app antes de gerar o instalador:
+
+  build/icon.ico   (Windows, recomendado 256x256, formato .ico)
+
+Se este arquivo nao existir, o comando "npm run dist" vai falhar,
+porque o package.json aponta para build/icon.ico.
+
+Se ainda nao tiver um icone pronto, duas opcoes rapidas:
+  1) Converter um PNG em .ico gratuitamente em icoconvert.com ou convertio.co
+  2) Remover a linha "icon": "build/icon.ico" do package.json (em "win")
+     para usar o icone padrao do Electron por enquanto.
