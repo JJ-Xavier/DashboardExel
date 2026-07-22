@@ -74,7 +74,11 @@ DashboardExel/
     ├── database.js             # Camada de acesso a dados + IndexedDB
     ├── filters.js              # Motor de filtros
     ├── charts.js               # Geração de gráficos (Chart.js)
+<<<<<<< HEAD
     ├── dashboard.js             # Orquestração da tela de dashboard
+=======
+    ├── dashboard.js            # Orquestração da tela de dashboard
+>>>>>>> 0de7804da0d963903e1620a1401c43336e58b229
     └── utils.js                # Funções utilitárias puras
 ```
 
