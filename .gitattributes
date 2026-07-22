@@ -1,0 +1,11 @@
+# Normaliza fim de linha: o repositório guarda sempre LF.
+# Evita que o Git enxergue arquivo inteiro como alterado só porque
+# o editor no Windows salvou em CRLF.
+* text=auto eol=lf
+
+# Binários — nunca converter.
+*.ico  binary
+*.png  binary
+*.jpg  binary
+*.xlsx binary
+*.exe  binary

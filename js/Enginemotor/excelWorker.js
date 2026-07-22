@@ -25,7 +25,7 @@
 // Dependências, na mesma ordem em que eram carregadas via <script>
 // na thread principal antes desta mudança.
 importScripts(
-    "https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js",
+    "../vendor/xlsx.full.min.js",
     "utils.js",
     "analyzer.js",
     "statistics.js",

@@ -1,0 +1,40 @@
+{
+  "name": "kapo-analytics",
+  "version": "1.0.0",
+  "description": "Dashboard de faturamento de oficina automotiva — leitura de Excel/CSV 100% local",
+  "main": "main.js",
+  "author": "",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.kapo.analytics",
+    "productName": "Kapo Analytics",
+    "files": [
+      "index.html",
+      "dashboard.html",
+      "main.js",
+      "css/**/*",
+      "js/**/*"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    }
+  }
+}

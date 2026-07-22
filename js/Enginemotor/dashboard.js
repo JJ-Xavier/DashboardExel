@@ -949,7 +949,65 @@
 
         const serviceCol = currentSheet.resolveColumn("serviceCost");
         const partsCol = currentSheet.resolveColumn("partsCost");
-        return [serviceCol, partsCol].filter(c => c && c !== targetColumn);
+        const known = [serviceCol, partsCol].filter(c => c && c !== targetColumn);
+        if (known.length) return known;
+
+        // Esta aba não tem colunas com o papel M.O/Peças (ex.: abas de
+        // "resumo" com estrutura diferente, tipo Manutenção + Sinistro).
+        // Em vez de desistir e cair num modo de comparação sem relação
+        // real com o total, procura entre as outras colunas monetárias da
+        // aba um conjunto que realmente componha o total, linha a linha.
+        return autoDetectComponentColumns(targetColumn);
+    }
+
+    /** Testa combinações de colunas monetárias da aba (pares, depois trios)
+     *  contra `targetColumn`, linha a linha, e retorna a combinação mais
+     *  simples cuja soma bate com o total na grande maioria das linhas.
+     *  Isso generaliza a decomposição pra qualquer aba, sem precisar
+     *  cadastrar manualmente cada novo padrão de colunas (tipo "Manutenção
+     *  + Sinistro"). Retorna [] se nenhuma combinação bater bem o
+     *  suficiente — nesse caso o card cai no modo de comparação, como
+     *  antes. */
+    function autoDetectComponentColumns(targetColumn) {
+        const candidates = currentSheet.getColumnRoles()
+            .filter(c => MONEY_LIKE_ROLES.has(c.role) && c.column !== targetColumn && !BLANK_HEADER_RX.test(c.column))
+            .map(c => c.column);
+        if (candidates.length < 2) return [];
+
+        const rows = lastKpiRows;
+
+        function matchRatio(cols) {
+            let matches = 0, checked = 0;
+            for (const row of rows) {
+                const target = Utils.parseNumberSmart(row[targetColumn]);
+                if (target === null || target === undefined) continue;
+                checked++;
+                const sum = cols.reduce((s, c) => s + (Utils.parseNumberSmart(row[c]) || 0), 0);
+                const tolerance = Math.max(1, Math.abs(target) * 0.01); // 1% ou R$1
+                if (Math.abs(sum - target) <= tolerance) matches++;
+            }
+            return checked ? matches / checked : 0;
+        }
+
+        function combinations(arr, size) {
+            if (size === 0) return [[]];
+            if (arr.length < size) return [];
+            const [first, ...rest] = arr;
+            const withFirst = combinations(rest, size - 1).map(c => [first, ...c]);
+            return [...withFirst, ...combinations(rest, size)];
+        }
+
+        // Prefere a combinação mais simples (menos colunas) que já explique
+        // bem o total; só sobe pra trios se nenhum par servir.
+        for (let size = 2; size <= Math.min(3, candidates.length); size++) {
+            let best = null;
+            for (const combo of combinations(candidates, size)) {
+                const ratio = matchRatio(combo);
+                if (ratio >= 0.9 && (!best || ratio > best.ratio)) best = { combo, ratio };
+            }
+            if (best) return best.combo;
+        }
+        return [];
     }
 
     /**

@@ -98,7 +98,7 @@
     function ensureFallbackDeps() {
         if (typeof ExcelEngine !== "undefined") return Promise.resolve();
         if (!fallbackDepsPromise) {
-            fallbackDepsPromise = loadScript("https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js")
+            fallbackDepsPromise = loadScript("js/vendor/xlsx.full.min.js")
                 .then(() => loadScript("js/Enginemotor/analyzer.js"))
                 .then(() => loadScript("js/Enginemotor/indexer.js"))
                 .then(() => loadScript("js/Enginemotor/excelEngine.js"));
