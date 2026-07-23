@@ -44,7 +44,7 @@
         return new Promise((resolve, reject) => {
             let worker;
             try {
-                worker = new Worker("js/Enginemotor/excelWorker.js");
+                worker = new Worker("../js/Enginemotor/excelWorker.js");
             } catch (err) {
                 reject(err);
                 return;
@@ -98,9 +98,9 @@
     function ensureFallbackDeps() {
         if (typeof ExcelEngine !== "undefined") return Promise.resolve();
         if (!fallbackDepsPromise) {
-            fallbackDepsPromise = loadScript("js/vendor/xlsx.full.min.js")
-                .then(() => loadScript("js/Enginemotor/analyzer.js"))
-                .then(() => loadScript("js/Enginemotor/excelEngine.js"));
+            fallbackDepsPromise = loadScript("../js/vendor/xlsx.full.min.js")
+                .then(() => loadScript("../js/Enginemotor/analyzer.js"))
+                .then(() => loadScript("../js/Enginemotor/excelEngine.js"));
         }
         return fallbackDepsPromise;
     }

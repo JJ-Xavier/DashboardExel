@@ -18,9 +18,8 @@
     "appId": "com.kapo.analytics",
     "productName": "Kapo Analytics",
     "files": [
-      "index.html",
-      "dashboard.html",
       "main.js",
+      "HTML/**/*",
       "css/**/*",
       "js/**/*"
     ],

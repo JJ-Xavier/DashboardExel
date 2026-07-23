@@ -66,11 +66,17 @@ upload para lugar nenhum**. Tudo roda no navegador.
 
 ```
 DashboardExel/
-├── index.html                 # Tela de importação
-├── dashboard.html             # Tela do dashboard
+├── HTML/
+│   ├── index.html              # Tela de importação
+│   └── dashboard.html          # Tela do dashboard
 ├── css/
 │   └── style.css
+├── build/
+│   └── icon.ico
+├── main.js                     # Processo principal do Electron
+├── package.json
 └── js/
+    ├── vendor/                 # Chart.js e SheetJS locais
     └── Enginemotor/
         ├── entrada.js         # Fluxo de upload/importação (tela index.html)
         ├── excelEngine.js     # Leitura e normalização de planilhas
@@ -114,7 +120,7 @@ desacoplado e reutilizável.
 ## 🚀 Como rodar localmente
 
 Como o projeto usa **Web Workers**, ele precisa ser servido via HTTP —
-abrir `index.html` direto como arquivo (`file://`) não funciona em todos
+abrir `HTML/index.html` direto como arquivo (`file://`) não funciona em todos
 os navegadores.
 
 Qualquer servidor estático simples resolve, por exemplo:
@@ -127,7 +133,7 @@ python3 -m http.server 8080
 npx serve .
 ```
 
-Depois acesse `http://localhost:8080/index.html`.
+Depois acesse `http://localhost:8080/HTML/index.html`.
 
 ---
 

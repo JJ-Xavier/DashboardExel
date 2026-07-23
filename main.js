@@ -26,7 +26,7 @@ function createWindow() {
         show: false
     });
 
-    mainWindow.loadFile("index.html");
+    mainWindow.loadFile(path.join(__dirname, "HTML", "index.html"));
 
     // Só mostra a janela quando o conteúdo já carregou, evita "flash" branco
     mainWindow.once("ready-to-show", () => {
