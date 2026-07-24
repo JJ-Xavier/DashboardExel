@@ -25,14 +25,27 @@ const Statistics = (() => {
         return total / vals.length;
     }
 
+    /**
+     * min/max por VARREDURA, não por spread.
+     * `Math.min(...vals)` empurra cada valor como argumento na pilha de
+     * chamada: em abas grandes (dezenas de milhares de linhas) isso
+     * estoura com "Maximum call stack size exceeded" e derruba a
+     * renderizacao inteira. Um laco simples nao tem esse limite.
+     */
     function min(rows, col) {
         const vals = numericValues(rows, col);
-        return vals.length ? Math.min(...vals) : null;
+        if (!vals.length) return null;
+        let m = vals[0];
+        for (let i = 1; i < vals.length; i++) if (vals[i] < m) m = vals[i];
+        return m;
     }
 
     function max(rows, col) {
         const vals = numericValues(rows, col);
-        return vals.length ? Math.max(...vals) : null;
+        if (!vals.length) return null;
+        let m = vals[0];
+        for (let i = 1; i < vals.length; i++) if (vals[i] > m) m = vals[i];
+        return m;
     }
 
     function median(rows, col) {
@@ -108,8 +121,29 @@ const Statistics = (() => {
      * qualquer subconjunto de linhas (ex: dashboard.js durante filtros
      * ao vivo) — não foram removidas nem tiveram assinatura alterada.
      */
+    /**
+     * Menor (dir = -1) ou maior (dir = 1) data de uma lista, por
+     * varredura. Mesmo motivo do min/max numerico: `Math.min(...arr)`
+     * estoura a pilha em listas grandes.
+     */
+    function minMaxDate(dateVals, dir) {
+        if (!dateVals || !dateVals.length) return null;
+        let best = dateVals[0];
+        for (let i = 1; i < dateVals.length; i++) {
+            const cmp = dateVals[i].getTime() - best.getTime();
+            if ((dir < 0 && cmp < 0) || (dir > 0 && cmp > 0)) best = dateVals[i];
+        }
+        return new Date(best.getTime());
+    }
+
     function summarizeColumn(rows, col, role = "text") {
-        const numericRoles = ["money", "number", "percentage"];
+        // serviceCost e partsCost sao valores monetarios como qualquer
+        // outro: sem eles nesta lista, colunas de custo eram resumidas
+        // como CATEGORICAS — sem soma/media/mediana/min/max — e ainda
+        // montavam uma tabela de frequencia com milhares de valores
+        // distintos a cada importacao (resumo errado + trabalho jogado
+        // fora).
+        const numericRoles = ["money", "serviceCost", "partsCost", "number", "percentage"];
         const isNumeric = numericRoles.includes(role);
         const isDate = role === "date";
 
@@ -196,8 +230,8 @@ const Statistics = (() => {
         if (isDate) {
             return {
                 ...base,
-                minDate: dateVals.length ? new Date(Math.min(...dateVals)) : null,
-                maxDate: dateVals.length ? new Date(Math.max(...dateVals)) : null
+                minDate: minMaxDate(dateVals, -1),
+                maxDate: minMaxDate(dateVals, 1)
             };
         }
 

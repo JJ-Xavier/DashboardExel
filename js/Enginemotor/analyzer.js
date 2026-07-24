@@ -39,13 +39,15 @@ const Analyzer = (() => {
             "valor servico", "valor do servico", "custo servico", "custo do servico",
             "valor mao de obra", "custo mao de obra", "mao de obra", "valor mo",
             "custo mo", "vlr servico", "vlr mao de obra", "servicos", "mao obra",
-            "valor da mao de obra", "total servico", "total mao de obra"
+            "valor da mao de obra", "total servico", "total mao de obra",
+            "mdo", "m d o", "labor", "labor cost", "service cost", "workmanship"
         ],
         partsCost: [
             "valor peca", "valor pecas", "custo peca", "custo pecas",
             "valor material", "custo material", "vlr peca", "vlr pecas",
             "pecas", "materiais", "total peca", "total pecas",
-            "valor das pecas", "custo das pecas"
+            "valor das pecas", "custo das pecas",
+            "parts", "parts cost", "materials", "material cost", "spare parts"
         ],
         entityName: [
             "cliente", "razao social", "razão social", "nome", "fornecedor",
@@ -180,6 +182,22 @@ const Analyzer = (() => {
 
     const MONEY_ROLES = new Set(["money", "serviceCost", "partsCost"]);
 
+    // Papéis que NÃO podem ser atribuídos só por semelhança fuzzy de
+    // nome: ou o nome tem um token real em comum com o dicionário, ou
+    // o sinal de nome é descartado (ver bloco (B) em scoreColumnForRole).
+    // "money" fica de fora de propósito: seus sinônimos ("valor",
+    // "total") são genéricos o bastante para que a exigência de token
+    // não mude nada, e o papel já tem guarda própria de marcadores.
+    const NAME_ANCHORED_ROLES = new Set([
+        "serviceCost", "partsCost", "id", "entityName", "modelName", "status"
+    ]);
+
+    // Papéis definidos por FORMATO estrito: se nenhum valor da amostra
+    // bate com o formato, o papel é impossível (ver bloco (E)).
+    const FORMAT_ROLES = new Set([
+        "document_cpf", "document_cnpj", "plate", "phone", "email", "maintenanceType"
+    ]);
+
     // Tokens de nome que indicam CONTAGEM ou MEDIDA FÍSICA — nunca um
     // valor em R$. Sem essa lista, colunas como "QTD MANUT PREVENTIVA E
     // CORRETIVA" (contagem de manutenções) ou "KM" (odômetro) acabavam
@@ -205,11 +223,23 @@ const Analyzer = (() => {
     function scoreColumnForRole(colName, samples, role) {
         const nameNorm = Utils.normalizeText(colName);
 
+        // ---- (A) Colunas SEM cabeçalho real ----
+        // O detectHeader batiza colunas sem título como "Coluna_N". Esse
+        // nome é SINTÉTICO: não carrega nenhuma informação sobre o
+        // conteúdo. Mesmo assim a similaridade de Levenshtein contra os
+        // sinônimos devolve um valor de RUÍDO (0,2–0,4) — nunca zero —
+        // que era suficiente para passar nas guardas de evidência de nome
+        // e fazer a coluna ganhar um papel financeiro específico por
+        // puro acaso. Zerando o sinal de nome, essas colunas só podem
+        // receber papéis que o CONTEÚDO comprova sozinho (CPF, CNPJ,
+        // placa, e-mail...) e caem em "number"/"text" caso contrário.
+        const isSyntheticName = /^coluna \d+$/.test(nameNorm);
+
         // sinal 1: nome
         let nameScore = 0;
         const dict = SYNONYMS[role] || [];
         for (const syn of dict) {
-            const s = Utils.similarity(nameNorm, syn);
+            const s = isSyntheticName ? 0 : Utils.similarity(nameNorm, syn);
             if (s > nameScore) nameScore = s;
             // bônus se o nome inteiro contém o sinônimo como PALAVRA
             // (fronteira de espaço), não como substring cru — sinônimos
@@ -217,9 +247,28 @@ const Analyzer = (() => {
             // dentro de qualquer palavra que os contivesse por acidente
             // (ex.: "QDT SINISTRO" contém "dt", "CUSTOS" contém "os"),
             // classificando colunas erradas com o papel.
-            if (syn && new RegExp(`(^| )${syn.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}( |$)`).test(nameNorm)) {
+            if (!isSyntheticName && syn &&
+                new RegExp(`(^| )${syn.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}( |$)`).test(nameNorm)) {
                 nameScore = Math.max(nameScore, 0.9);
             }
+        }
+
+        // ---- (B) Levenshtein sozinho não é evidência de nome ----
+        // A similaridade de Levenshtein entre dois nomes quaisquer quase
+        // nunca é zero: fica na faixa de 0,2–0,4 mesmo sem nenhuma
+        // relação semântica ("n fatura" x "valor pecas", "entradas" x
+        // "custo pecas", "vencimento" x "sequencial"). Como as guardas
+        // abaixo exigem só nameScore >= 0.15, esse RUÍDO passava e fazia
+        // a coluna receber um papel MUITO específico por coincidência de
+        // string. Para os papéis específicos, exige-se pelo menos um
+        // TOKEN em comum com algum sinônimo — sem isso o sinal de nome é
+        // considerado inexistente e o papel é recusado pelas guardas.
+        if (NAME_ANCHORED_ROLES.has(role) && nameScore > 0 && nameScore < 0.9) {
+            const nameTokens = new Set(nameNorm.split(" ").filter(t => t.length > 2));
+            const sharesToken = dict.some(syn =>
+                syn.split(" ").some(t => t.length > 2 && nameTokens.has(t))
+            );
+            if (!sharesToken) nameScore = 0;
         }
 
         // O papel "percentage" tem "taxa" como sinônimo (para pegar colunas
@@ -254,6 +303,26 @@ const Analyzer = (() => {
                 const hasMOToken = tokens.includes("mo") ||
                     tokens.some((t, i) => t === "m" && tokens[i + 1] === "o");
                 if (hasMOToken) nameScore = Math.max(nameScore, 0.65);
+            }
+
+            // ---- (D) "despesa" é valor agregado, não componente ----
+            // Colunas como "VALOR TOTAL OS - DESPESA" descrevem a despesa
+            // TOTAL da O.S, não o custo de mão de obra nem o de peças.
+            // Sem esta penalidade elas competiam de igual para igual com
+            // "M.O TOTAL"/"PEÇAS TOTAL" pelos papéis de componente e
+            // podiam vencer por ordem de coluna. A penalidade só vale
+            // quando NÃO há evidência de mão de obra ou peça no nome —
+            // "custo mão de obra" segue válido.
+            if (role === "serviceCost" || role === "partsCost") {
+                const tokens = nameNorm.split(" ");
+                const hasComponentEvidence =
+                    tokens.includes("mo") ||
+                    tokens.some((t, i) => t === "m" && tokens[i + 1] === "o") ||
+                    /\bmao\b|\bobra\b|\bservico\b|\bservicos\b/.test(nameNorm) ||
+                    /\bpeca\b|\bpecas\b|\bmaterial\b|\bmateriais\b/.test(nameNorm);
+                if (/\bdespesa\b|\bdespesas\b/.test(nameNorm) && !hasComponentEvidence) {
+                    nameScore = Math.max(0, nameScore - 0.5);
+                }
             }
 
             const hasTotal = /\btotal\b/.test(nameNorm);
@@ -314,6 +383,23 @@ const Analyzer = (() => {
             }
         }
 
+        // ---- (C) "date" a partir de número puro ----
+        // O testador de data aceita números na faixa 18000-80000 como
+        // serial do Excel. Quilometragem de frota cai EXATAMENTE nessa
+        // faixa (29.730, 50.243, 60.410...), então "KM" era classificada
+        // como data e exibida/filtrada como tal. Datas de verdade chegam
+        // do SheetJS como objeto Date (cellDates:true) ou como texto
+        // formatado — nunca como número cru. Só aceita o ramo numérico
+        // se houver evidência de nome.
+        if (role === "date" && nameScore < 0.25) {
+            const hasRealDateValues = samples.some(v =>
+                v instanceof Date || (typeof v === "string" && Utils.parseDateSmart(v) !== null)
+            );
+            if (!hasRealDateValues) {
+                return { role, nameScore, contentScore: 0, combined: 0 };
+            }
+        }
+
         // Mesmo raciocínio para serviceOrder: o testador aceita qualquer
         // sequência de 2-10 dígitos, então números genéricos (KM, códigos)
         // "passam". Só o prefixo "OS" explícito nos valores torna o
@@ -342,6 +428,18 @@ const Analyzer = (() => {
         const hasTester = !!tester;
         if (hasTester) {
             contentScore = Utils.matchRatio(samples, tester);
+        }
+
+        // ---- (E) Papéis de FORMATO exigem alguma prova no conteúdo ----
+        // CPF, CNPJ, placa, telefone, e-mail e tipo de manutenção são
+        // definidos por um formato/vocabulário estrito. Se NENHUM valor
+        // da amostra bate com esse formato, o papel está errado por
+        // definição — não importa o quanto o nome se pareça. Sem esta
+        // regra, "CONTRATO" virava telefone só porque a distância de
+        // Levenshtein até "contato" é de uma letra, com 0% dos valores
+        // parecendo um telefone.
+        if (FORMAT_ROLES.has(role) && contentScore === 0) {
+            return { role, nameScore, contentScore: 0, combined: 0 };
         }
 
         const specificity = SPECIFICITY[role] !== undefined ? SPECIFICITY[role] : 0.5;
