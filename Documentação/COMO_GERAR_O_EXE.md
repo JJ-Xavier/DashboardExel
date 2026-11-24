@@ -47,11 +47,41 @@ nesse ambiente antes de gerar o instalador.
 npm run dist
 ```
 
-O instalador final aparece em `release/`, algo como:
+O instalador final aparece em `dist/`, algo como:
 `Kapo Analytics Setup 1.0.0.exe`
 
 Esse é o arquivo que você distribui pros colegas/liderança. Ao rodar, ele
 instala o app normalmente (ícone na área de trabalho, atalho no menu iniciar).
+
+## Problemas conhecidos ao gerar
+
+**`npm warn install-scripts ... electron (postinstall)`** — o npm 11+ bloqueia
+scripts de instalação por padrão, e é o script do Electron que baixa o
+programa (sem ele o `npm start` não abre). A liberação já está registrada no
+`package.json` (`"allowScripts"`). Se aparecer de novo (ex.: versão nova do
+Electron), rode:
+
+```
+npm install-scripts approve electron
+```
+
+**`Cannot create symbolic link : O cliente não tem o privilégio necessário`**
+(durante o `npm run dist`, extraindo `winCodeSign`) — o pacote de ferramentas
+que grava o ícone no `.exe` traz dois atalhos de bibliotecas do macOS, e o
+Windows só cria atalhos com Modo de Desenvolvedor ou como administrador. Três
+saídas, qualquer uma resolve:
+
+1. Ativar o **Modo de Desenvolvedor** (Configurações > Sistema > Para
+   desenvolvedores) e rodar `npm run dist` de novo; ou
+2. Rodar o terminal **como administrador** uma vez; ou
+3. Extrair o pacote à mão no cache, ignorando os dois atalhos do macOS (o
+   `<numero>.7z` é qualquer um dos arquivos baixados nessa pasta):
+   ```
+   cd %LOCALAPPDATA%\electron-builder\Cache\winCodeSign
+   "<pasta do projeto>\node_modules\7zip-bin\win\x64\7za.exe" x -y <numero>.7z -owinCodeSign-2.6.0
+   ```
+   Os dois erros de "symbolic link" nessa extração são esperados. Depois
+   disso, `npm run dist` funciona e o cache fica pronto para os próximos builds.
 
 ## Sobre a base de dados (a planilha)
 

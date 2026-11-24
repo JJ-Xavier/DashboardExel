@@ -33,10 +33,9 @@ const Charts = (() => {
                 '<div style="display:flex;align-items:center;justify-content:center;height:100%;' +
                 'color:#F25C5C;font-size:13px;text-align:center;padding:0 16px;">' +
                 'Não foi possível carregar a biblioteca de gráficos (Chart.js). ' +
-                'Verifique sua conexão com a internet ou se algum firewall/bloqueador ' +
-                'está impedindo o carregamento de scripts externos.</div>';
+                'Verifique se o arquivo js/vendor/chart.umd.js existe na instalação.</div>';
         }
-        console.error("Charts: a biblioteca Chart.js não está disponível (verifique o <script> do CDN em dashboard.html).");
+        console.error("Charts: a biblioteca Chart.js não está disponível (verifique js/vendor/chart.umd.js e o <script> em dashboard.html).");
         return false;
     }
 
@@ -47,15 +46,41 @@ const Charts = (() => {
         }
     }
 
+    /** Destrói todos os gráficos. Chamar antes de esvaziar o container:
+     *  gráficos que a aba nova não recria ficavam vivos presos a canvases
+     *  já removidos da tela. */
+    function destroyAll() {
+        for (const chart of instances.values()) chart.destroy();
+        instances.clear();
+    }
+
+    /**
+     * Junta as opções base com as do gráfico. O Object.assign raso de
+     * antes trocava o bloco `plugins` INTEIRO quando o gráfico passava
+     * qualquer plugin (ex.: legenda à direita no donut): a cor da legenda
+     * e o estilo escuro do tooltip sumiam, e a legenda ficava cinza
+     * padrão do Chart.js sobre o fundo escuro.
+     */
     function baseOptions(extra = {}) {
-        return Object.assign({
+        const base = {
             responsive: true,
             maintainAspectRatio: false,
             plugins: {
                 legend: { labels: { font: { family: "Inter, sans-serif" }, color: "#8B96B3" } },
                 tooltip: { backgroundColor: "#0B1220", padding: 10, cornerRadius: 8, borderColor: "#232E4A", borderWidth: 1 }
             }
-        }, extra);
+        };
+        const { plugins = {}, ...rest } = extra;
+        return {
+            ...base,
+            ...rest,
+            plugins: {
+                ...base.plugins,
+                ...plugins,
+                legend: { ...base.plugins.legend, ...plugins.legend },
+                tooltip: { ...base.plugins.tooltip, ...plugins.tooltip }
+            }
+        };
     }
 
     function bar(canvasId, { labels, values, label = "Total" }) {
@@ -268,7 +293,7 @@ const Charts = (() => {
         return chart;
     }
 
-    return { bar, line, multiLine, donut, horizontalBar, destroy, PALETTE };
+    return { bar, line, multiLine, donut, horizontalBar, destroy, destroyAll, PALETTE };
 })();
 
 if (typeof module !== "undefined" && module.exports) module.exports = Charts;

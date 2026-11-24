@@ -73,6 +73,8 @@ DashboardExel/
 │   └── style.css
 ├── build/
 │   └── icon.ico
+├── dados-teste/
+│   └── gerar_teste.js          # Gera uma planilha sintética (~10 mil O.S) para testar a importação
 ├── main.js                     # Processo principal do Electron
 ├── package.json
 └── js/
@@ -83,7 +85,6 @@ DashboardExel/
         ├── excelWorker.js     # Web Worker que roda o pipeline de import
         ├── analyzer.js        # Classificação semântica de colunas
         ├── statistics.js      # Estatísticas por coluna
-        ├── indexer.js         # Índices para busca/filtro rápidos
         ├── database.js        # Camada de acesso a dados + IndexedDB
         ├── filters.js         # Motor de filtros (multi-select, range, etc.)
         ├── charts.js          # Geração dos gráficos (Chart.js)
@@ -100,8 +101,8 @@ Arquivo (.xlsx/.xls/.csv)
   ExcelEngine  ──► roda dentro do Web Worker
         │           (parse, detecção de cabeçalho, normalização)
         ▼
-  Analyzer + Statistics + Indexer
-        │           (papel semântico de cada coluna, estatísticas, índices)
+  Analyzer + Statistics
+        │           (papel semântico de cada coluna, estatísticas)
         ▼
      Database        (API única de acesso; salva/lê do IndexedDB)
         │

@@ -64,20 +64,22 @@
         loadSheet(pickDefaultSheet());
 
         els.sheetSelect && els.sheetSelect.addEventListener("change", e => {
-            Filters.clearAll();
+            resetFiltersForSheetChange();
             loadSheet(e.target.value);
         });
 
+        // Filters.onChange (abaixo) já renderiza; chamar render() aqui
+        // também fazia cada busca filtrar e redesenhar tudo duas vezes.
         els.searchInput && els.searchInput.addEventListener(
             "input",
-            Utils.debounce(e => { Filters.setSearch(e.target.value); render(); }, 250)
+            Utils.debounce(e => Filters.setSearch(e.target.value), 250)
         );
 
+        // clearAll avisa o onChange, que renderiza e sincroniza os controles
+        // (checkboxes, datas, faixas, chips) — não precisa reconstruí-los.
         els.clearFiltersBtn && els.clearFiltersBtn.addEventListener("click", () => {
-            Filters.clearAll();
             if (els.searchInput) els.searchInput.value = "";
-            renderFilterControls();
-            render();
+            Filters.clearAll();
         });
 
         Filters.onChange(() => { render(); syncFilterUI(); });
@@ -231,7 +233,19 @@
         els.sheetSelect.innerHTML = visible
             .map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
             .join("");
-        els.sheetSelect.value = pickDefaultSheet();
+        // Mantém a aba aberta selecionada se ela continua visível. Antes
+        // voltava sempre para a aba padrão: ocultar OUTRA aba no gerenciador
+        // fazia o seletor mostrar um nome enquanto a tela exibia outra aba.
+        const keepCurrent = currentSheet && visible.includes(currentSheet.name);
+        els.sheetSelect.value = keepCurrent ? currentSheet.name : pickDefaultSheet();
+    }
+
+    /** Filtros valem por aba: ao trocar, zera o estado (sem renderizar a
+     *  aba antiga) e limpa também o texto da busca — antes o campo
+     *  continuava preenchido com a busca já desativada. */
+    function resetFiltersForSheetChange() {
+        Filters.clearAll({ silent: true });
+        if (els.searchInput) els.searchInput.value = "";
     }
 
     /** Nomes de abas que devem aparecer no seletor (todas, menos as ocultadas manualmente). */
@@ -329,7 +343,7 @@
                 const wasShowingHiddenSheet = currentSheet && !visibleSheetNames().includes(currentSheet.name);
                 populateSheetSelector();
                 if (wasShowingHiddenSheet) {
-                    Filters.clearAll();
+                    resetFiltersForSheetChange();
                     loadSheet(els.sheetSelect.value);
                 }
             });
@@ -369,8 +383,8 @@
                 wrap.classList.add("multiselect");
                 wrap.dataset.role = ctrl.role;
                 wrap.innerHTML = `
-                    <label>${ctrl.label}</label>
-                    <button type="button" class="ms-toggle" data-role="${ctrl.role}">
+                    <label>${escapeHtml(ctrl.label)}</label>
+                    <button type="button" class="ms-toggle" data-role="${escapeHtml(ctrl.role)}">
                         <span class="ms-toggle-text">Todos</span>
                         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
                     </button>
@@ -419,11 +433,11 @@
                 wrap.classList.add("date-filter");
                 wrap.dataset.role = ctrl.role;
                 wrap.innerHTML = `
-                    <label>${ctrl.label}</label>
+                    <label>${escapeHtml(ctrl.label)}</label>
                     <div class="date-range">
-                        <input type="date" data-role="${ctrl.role}" data-edge="start">
+                        <input type="date" data-role="${escapeHtml(ctrl.role)}" data-edge="start">
                         <span>até</span>
-                        <input type="date" data-role="${ctrl.role}" data-edge="end">
+                        <input type="date" data-role="${escapeHtml(ctrl.role)}" data-edge="end">
                     </div>
                 `;
                 const [startInput, endInput] = wrap.querySelectorAll("input");
@@ -433,8 +447,8 @@
                         return;
                     }
 
-                    let start = startInput.value ? new Date(startInput.value) : null;
-                    let end = endInput.value ? new Date(endInput.value) : null;
+                    let start = startInput.value ? parseInputDate(startInput.value) : null;
+                    let end = endInput.value ? parseInputDate(endInput.value) : null;
 
                     if (start) start.setHours(0, 0, 0, 0);
                     if (end) end.setHours(23, 59, 59, 999);
@@ -462,6 +476,17 @@
         }
 
         syncFilterUI();
+    }
+
+    /**
+     * Lê o "aaaa-mm-dd" de um <input type="date"> como data LOCAL.
+     * `new Date("2025-01-31")` é meia-noite UTC — no Brasil (UTC-3) isso
+     * é 30/01 às 21h, então o filtro "até 31/01" deixava o dia 31 de fora
+     * e "a partir de 02/01" incluía o dia 01.
+     */
+    function parseInputDate(value) {
+        const [y, m, d] = value.split("-").map(Number);
+        return new Date(y, m - 1, d);
     }
 
     function closeAllMultiselects() {
@@ -842,14 +867,17 @@
         // escala 0-100 são exibidas como estão.
         const percentageCols = currentSheet.resolveColumns("percentage");
         for (const pcol of percentageCols.slice(0, 2)) { // no máx. 2 cards, pra não inflar a linha
-            const vals = rows
-                .map(r => Utils.parseNumberSmart(r[pcol]))
-                .filter(v => v !== null && !isNaN(v));
-            if (!vals.length) continue;
+            let sum = 0, count = 0;
+            for (const r of rows) {
+                const v = Utils.parseNumberSmart(r[pcol]);
+                if (v === null || isNaN(v)) continue;
+                sum += v;
+                count++;
+            }
+            if (!count) continue;
 
-            const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
-            const maxV = Math.max(...vals);
-            const displayValue = maxV <= 2 ? avg * 100 : avg; // fração -> %
+            const avg = sum / count;
+            const displayValue = isFractionPercent(pcol) ? avg * 100 : avg; // fração -> %
 
             percentual.push({
                 label: `${prettify(pcol)} (Média)`,
@@ -880,10 +908,16 @@
         }
 
         if (dateCol) {
-            const dates = rows.map(r => Utils.parseDateSmart(r[dateCol])).filter(Boolean);
-            if (dates.length) {
-                const max = new Date(Math.max(...dates));
-                others.push({ label: "Registro mais recente", value: Utils.formatDate(max), type: "neutral" });
+            // Varredura em vez de Math.max(...datas): o spread estoura a
+            // pilha ("Maximum call stack size exceeded") a partir de ~120 mil
+            // linhas e derrubava a renderização inteira dos KPIs.
+            let latest = null;
+            for (const r of rows) {
+                const d = Utils.parseDateSmart(r[dateCol]);
+                if (d && (!latest || d > latest)) latest = d;
+            }
+            if (latest) {
+                others.push({ label: "Registro mais recente", value: Utils.formatDate(latest), type: "neutral" });
             }
         }
 
@@ -894,8 +928,8 @@
             return `
             <div class="kpi-card kpi-${c.type}${clickable ? " kpi-clickable" : ""}"
                  ${clickable ? `data-kpi-column="${escapeHtml(c.column)}" data-kpi-label="${escapeHtml(c.label)}" tabindex="0" role="button"` : ""}>
-                <span class="kpi-label">${c.label}${clickable ? '<span class="kpi-expand-hint">Ver composição ›</span>' : ""}</span>
-                <span class="kpi-value">${c.value}</span>
+                <span class="kpi-label">${escapeHtml(c.label)}${clickable ? '<span class="kpi-expand-hint">Ver composição ›</span>' : ""}</span>
+                <span class="kpi-value">${escapeHtml(c.value)}</span>
             </div>
         `;
         }).join("");
@@ -911,6 +945,28 @@
 
     const MONEY_LIKE_ROLES = new Set(["money", "serviceCost", "partsCost"]);
     const BLANK_HEADER_RX = /^Coluna_\d+(_\d+)?$/i;
+
+    // Mesmos papéis que nunca viram filtro de seleção (filters.js):
+    // valores, datas, documentos, contatos e números não são "categorias".
+    const NON_CATEGORY_ROLES = new Set([
+        ...MONEY_LIKE_ROLES, "date", "document_cpf", "document_cnpj", "email",
+        "phone", "id", "plate", "percentage", "number"
+    ]);
+
+    /** Percentual guardado como fração (0,15 = 15%)? Decide pela coluna
+     *  INTEIRA (máximo ≤ 2), não pelo recorte filtrado, para o card de KPI
+     *  e a tabela sempre usarem a mesma escala. */
+    function isFractionPercent(col) {
+        const st = currentSheet && currentSheet.statistics[col];
+        return !!st && st.max !== null && st.max !== undefined && st.max <= 2;
+    }
+
+    /** "OS 1234" para números puros; valores que já trazem o prefixo
+     *  ("OS-50001") ficam como estão, em vez de virar "OS OS-50001". */
+    function osLabel(value) {
+        const s = String(value);
+        return /^os[\s\-.:]?\d/i.test(s) ? s : `OS ${s}`;
+    }
 
     let kpiModalState = null; // { column, label, rows, groupDims, activeDim }
 
@@ -1080,7 +1136,7 @@
                 // valor anônimo, dá pra ver exatamente de onde ele veio.
                 const idParts = [];
                 if (serviceOrderCol && row[serviceOrderCol] != null && row[serviceOrderCol] !== "") {
-                    idParts.push(`OS ${row[serviceOrderCol]}`);
+                    idParts.push(osLabel(row[serviceOrderCol]));
                 }
                 if (entityCol && row[entityCol]) idParts.push(String(row[entityCol]));
                 const idLabel = idParts.length ? idParts.join(" — ") : `Registro sem identificação`;
@@ -1124,7 +1180,9 @@
         if (!statusCol) {
             for (const colInfo of currentSheet.getColumnRoles()) {
                 const col = colInfo.column;
-                if (MONEY_LIKE_ROLES.has(colInfo.role)) continue;
+                // Antes só excluía colunas de valor: contagens pequenas
+                // (ex.: "QDT SINISTRO", 0 a 5) viravam "categoria" de agrupamento.
+                if (NON_CATEGORY_ROLES.has(colInfo.role)) continue;
                 if (BLANK_HEADER_RX.test(col)) continue;
                 if (dims.some(d => d.column === col)) continue;
                 const uniq = currentSheet.unique(col);
@@ -1246,7 +1304,7 @@
         const { groupDims, activeDim } = kpiModalState;
         const tabsHtml = groupDims.map((d, i) => `
             <button type="button" class="kpi-modal-tab ${i === activeDim ? "active" : ""}" data-dim-index="${i}">
-                ${d.label}
+                ${escapeHtml(d.label)}
             </button>
         `).join("");
 
@@ -1307,7 +1365,8 @@
     function renderCharts(rows) {
         if (!els.chartsGrid) return;
 
-        // limpa
+        // limpa (destrói antes de remover os canvases — ver Charts.destroyAll)
+        Charts.destroyAll();
         els.chartsGrid.innerHTML = "";
 
         const moneyCol = currentSheet.resolveColumn("money");
@@ -1462,9 +1521,10 @@
         const card = document.createElement("div");
         card.className = opts.wide ? "chart-card chart-card-wide" : "chart-card";
 
+        // O título pode conter nome de coluna da planilha ("Top 10 ...").
         const headerHtml = opts.detailsButtonLabel
-            ? `<div class="chart-card-header"><h3>${title}</h3><button type="button" class="chart-card-details-btn" id="${id}DetailsBtn">${opts.detailsButtonLabel}</button></div>`
-            : `<h3>${title}</h3>`;
+            ? `<div class="chart-card-header"><h3>${escapeHtml(title)}</h3><button type="button" class="chart-card-details-btn" id="${id}DetailsBtn">${escapeHtml(opts.detailsButtonLabel)}</button></div>`
+            : `<h3>${escapeHtml(title)}</h3>`;
 
         card.innerHTML = `${headerHtml}<div class="chart-wrap"><canvas id="${id}"></canvas></div>`;
         els.chartsGrid.appendChild(card);
@@ -1657,7 +1717,7 @@
             exportCSV(
                 "outros_lancamentos.csv",
                 ["Mês", "O.S", "Cliente", "Valor"],
-                filtered.map(r => [r.monthLabel, r.os, r.cliente, r.valor.toFixed(2)])
+                filtered.map(r => [r.monthLabel, r.os, r.cliente, csvNumber(r.valor)])
             );
         });
     }
@@ -1676,7 +1736,7 @@
             : currentSheet.columns.slice(0, 10); // padrão: primeiras 10, até o usuário configurar
         const visibleRows = rows.slice(0, 200);
 
-        const thead = `<thead><tr>${cols.map(c => `<th>${prettify(c)}</th>`).join("")}</tr></thead>`;
+        const thead = `<thead><tr>${cols.map(c => `<th>${escapeHtml(prettify(c))}</th>`).join("")}</tr></thead>`;
         const tbody = `<tbody>${visibleRows.map(r => `
             <tr>${cols.map(c => `<td>${formatCell(r[c], c)}</td>`).join("")}</tr>
         `).join("")}</tbody>`;
@@ -1688,9 +1748,17 @@
         if (value === null || value === undefined) return "-";
         const role = currentSheet.analysis.columns.find(c => c.column === colName)?.role;
 
-        if (role === "money") {
+        // Todos os papéis de valor em R$ — antes só "money" era formatado e
+        // M.O/Peças apareciam como número cru (ex.: 1234.5).
+        if (MONEY_LIKE_ROLES.has(role)) {
             const n = Utils.parseNumberSmart(value);
-            return n !== null ? Utils.formatMoney(n) : escapeHtml(String(value));
+            return n !== null ? escapeHtml(Utils.formatMoney(n)) : escapeHtml(String(value));
+        }
+        if (role === "percentage") {
+            const n = Utils.parseNumberSmart(value);
+            if (n === null) return escapeHtml(String(value));
+            const pct = isFractionPercent(colName) ? n * 100 : n;
+            return escapeHtml(`${Utils.formatNumber(pct, 1)}%`);
         }
         if (role === "date") {
             const d = Utils.parseDateSmart(value);
@@ -1744,9 +1812,9 @@
             });
 
             const csvRows = monthly.map(m => {
-                const r = [formatMonthLabel(m.label), m.value.toFixed(2)];
-                if (monthlyService) r.push((monthlyService.get(m.label) || 0).toFixed(2));
-                if (monthlyParts) r.push((monthlyParts.get(m.label) || 0).toFixed(2));
+                const r = [formatMonthLabel(m.label), csvNumber(m.value)];
+                if (monthlyService) r.push(csvNumber(monthlyService.get(m.label) || 0));
+                if (monthlyParts) r.push(csvNumber(monthlyParts.get(m.label) || 0));
                 return r;
             });
 
@@ -1772,10 +1840,10 @@
             });
 
             const csvRows = grouped.map(g => {
-                const r = [String(g.key), g.value.toFixed(2)];
+                const r = [String(g.key), csvNumber(g.value)];
                 if (osCountMap) {
                     const count = osCountMap.get(g.key) || 0;
-                    r.push(String(count), (count ? g.value / count : 0).toFixed(2));
+                    r.push(String(count), csvNumber(count ? g.value / count : 0));
                 }
                 return r;
             });
@@ -1801,8 +1869,8 @@
 
             const csvRows = grouped.map(g => [
                 String(g.key),
-                g.value.toFixed(2),
-                (total ? (g.value / total) * 100 : 0).toFixed(1),
+                csvNumber(g.value),
+                csvNumber(total ? (g.value / total) * 100 : 0, 1),
                 String(countMap.get(g.key) || 0)
             ]);
 
@@ -1828,7 +1896,7 @@
 
             const csvRows = keys.map(k => {
                 const r = [String(k), String(countMap.get(k) || 0)];
-                if (moneyMap) r.push((moneyMap.get(k) || 0).toFixed(2));
+                if (moneyMap) r.push(csvNumber(moneyMap.get(k) || 0));
                 return r;
             });
 
@@ -1900,10 +1968,19 @@
      * Gera e baixa um arquivo CSV a partir de cabeçalhos e linhas.
      * Usa BOM UTF-8 para o Excel abrir acentos corretamente.
      */
+    /**
+     * Número para CSV com vírgula decimal. O arquivo usa ";" como
+     * separador (padrão do Excel em português), e nesse Excel o ponto é
+     * separador de MILHAR: "1234.50" não era lido como número.
+     */
+    function csvNumber(n, decimals = 2) {
+        return (Number(n) || 0).toFixed(decimals).replace(".", ",");
+    }
+
     function exportCSV(filename, headers, rows) {
         const escapeCSV = v => {
             const s = String(v ?? "");
-            return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+            return /[;"\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
         };
 
         const lines = [
@@ -1941,7 +2018,14 @@
         }[c]));
     }
 
-    document.addEventListener("DOMContentLoaded", boot);
-    if (document.readyState !== "loading") boot();
+    // Um caminho OU o outro: com o script carregado como "defer", o estado
+    // já é "interactive" ANTES do DOMContentLoaded disparar, e o padrão
+    // anterior (registrar o evento e também chamar direto) rodava o boot
+    // duas vezes, duplicando todos os event listeners.
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", boot);
+    } else {
+        boot();
+    }
 
 })();

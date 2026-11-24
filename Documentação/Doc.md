@@ -51,35 +51,41 @@ que possível, substituído por uma regra estrutural (ver
 ### Stack
 
 - HTML, CSS e JavaScript puro (sem framework, sem bundler, sem build step)
-- [SheetJS (xlsx)](https://sheetjs.com/) — leitura de planilhas, via CDN
-- [Chart.js](https://www.chartjs.org/) — gráficos, via CDN
+- [SheetJS (xlsx)](https://sheetjs.com/) 0.18.5 — leitura de planilhas, cópia local em `js/vendor/`
+- [Chart.js](https://www.chartjs.org/) 4.4.0 — gráficos, cópia local em `js/vendor/`
 - Web Workers — parsing/análise fora da thread principal
 - IndexedDB — persistência da base importada entre sessões
 - localStorage — apenas preferências leves de UI (ver [§9](#9-persistência))
+- Electron — empacotamento como app desktop (`main.js`, ver `COMO_GERAR_O_EXE.md`)
+
+As bibliotecas ficam em `js/vendor/` (e não em CDN) porque o app
+empacotado precisa abrir sem internet.
 
 ### Estrutura de arquivos
 
 ```
 DashboardExel/
-├── index.html                 # Tela de importação
-├── dashboard.html             # Tela do dashboard
+├── HTML/
+│   ├── index.html              # Tela de importação
+│   └── dashboard.html          # Tela do dashboard
 ├── css/style.css
-├── docs/                      # Esta documentação
-└── js/Enginemotor/
-    ├── entrada.js              # Fluxo de upload (tela index.html)
-    ├── excelEngine.js          # Leitura e normalização de planilhas
-    ├── excelWorker.js          # Web Worker que roda o pipeline de import
-    ├── analyzer.js             # Classificação semântica de colunas
-    ├── statistics.js           # Estatísticas por coluna
-    ├── database.js             # Camada de acesso a dados + IndexedDB
-    ├── filters.js              # Motor de filtros
-    ├── charts.js               # Geração de gráficos (Chart.js)
-<<<<<<< HEAD
-    ├── dashboard.js             # Orquestração da tela de dashboard
-=======
-    ├── dashboard.js            # Orquestração da tela de dashboard
->>>>>>> 0de7804da0d963903e1620a1401c43336e58b229
-    └── utils.js                # Funções utilitárias puras
+├── Documentação/               # Esta documentação
+├── dados-teste/                # Gerador de planilha sintética (~10 mil O.S) para testes
+├── build/                      # Ícone do instalador
+├── main.js                     # Processo principal do Electron
+└── js/
+    ├── vendor/                 # SheetJS e Chart.js locais
+    └── Enginemotor/
+        ├── entrada.js          # Fluxo de upload (tela index.html)
+        ├── excelEngine.js      # Leitura e normalização de planilhas
+        ├── excelWorker.js      # Web Worker que roda o pipeline de import
+        ├── analyzer.js         # Classificação semântica de colunas
+        ├── statistics.js       # Estatísticas por coluna
+        ├── database.js         # Camada de acesso a dados + IndexedDB
+        ├── filters.js          # Motor de filtros
+        ├── charts.js           # Geração de gráficos (Chart.js)
+        ├── dashboard.js        # Orquestração da tela de dashboard
+        └── utils.js            # Funções utilitárias puras
 ```
 
 ---
@@ -169,7 +175,11 @@ Passo a passo:
       negócio de verdade). Se a aba não tiver nenhuma coluna desses
       papéis (ex.: um resumo agregado por dia), não filtra nada — e
       nunca zera a planilha inteira mesmo que o filtro elimine tudo
-      (segurança).
+      (segurança). Uma coluna só serve de âncora se estiver preenchida
+      em ≥ 90% das primeiras 200 linhas; caso contrário passa para o
+      próximo papel. Isso impede que uma coluna **opcional** (ex.:
+      `FORNECEDOR` em branco em parte das linhas) faça linhas legítimas
+      sumirem.
    h. **Estatísticas por coluna** — `Statistics.summarizeColumn` (ver
       [§4](#4-modelo-de-dados)).
 4. Resultado final: `{ metadata, sheets }` — o `rawDatabase` — é enviado
@@ -292,10 +302,11 @@ para papéis sem testador (dependem só do nome). Abaixo de
 | `number` | Numérico genérico sem papel mais específico | ✓ | — |
 | `text` | Fallback — nenhum papel bateu com confiança suficiente | | — |
 
-> Coluna "Indexável" refere-se ao módulo `indexer.js`, que foi
-> **removido do pipeline** (ver [§13](#13-histórico-de-correções-relevantes)) por não ter
-> nenhum consumidor. Se uma futura necessidade de performance de filtro
-> justificar reintroduzi-lo, os papéis candidatos a índice eram:
+> Coluna "Indexável" refere-se ao antigo módulo `indexer.js`, que foi
+> **removido** (ver [§13](#13-histórico-de-correções-relevantes)) por não ter
+> nenhum consumidor; o código continua no histórico do git. Se uma futura
+> necessidade de performance de filtro justificar reintroduzi-lo, os papéis
+> candidatos a índice eram:
 > `entityName`, `serviceOrder`, `plate`, `modelName`, `status`, `date`,
 > `document_cpf`, `document_cnpj`, `id`.
 
@@ -311,6 +322,12 @@ conteúdo (`strictMoneyTester`) e recebem os mesmos ajustes de nome:
 - Nome com token `mo`/`m.o` (mão de obra) → piso de 0.65 no nameScore
   para `serviceCost`, detectado por token exato (não substring — evita
   confundir com "MODELO").
+- **`serviceCost`/`partsCost` exigem um token distintivo no nome** (ex.:
+  `peca`, `material`, `servico`, `mao`, `obra`). Palavras genéricas de
+  valor (`valor`, `vlr`, `total`, `custo`, `preco`, `cost` —
+  `GENERIC_NAME_TOKENS`) não contam como evidência. Sem isso,
+  `VALOR TOTAL` e `CUSTO TOTAL` viravam `partsCost` e a aba ficava sem
+  coluna `money`.
 - **Guard de evidência de nome:** como o testador de conteúdo aceita
   qualquer número finito (não há como distinguir "parece dinheiro" de
   "é só um número" olhando só o valor), colunas sem marcador explícito de
@@ -333,9 +350,11 @@ conteúdo (`strictMoneyTester`) e recebem os mesmos ajustes de nome:
 
 ### `percentage`
 
-- Conteúdo aceito: string terminando em `%`, ou número entre 0 e 2
-  (não 0–1 — percentuais compostos como "faturado/despesa" podem
-  legitimamente passar de 100%).
+- Conteúdo aceito: texto que seja **inteiro** um número seguido de `%`
+  (`12%`, `12,5 %`), ou número entre 0 e 2 (não 0–1 — percentuais
+  compostos como "faturado/despesa" podem legitimamente passar de 100%).
+  Texto livre que só termina em `%` ("Desconto comercial de 10%") não
+  conta.
 - `%` literal no nome da coluna é a evidência mais forte possível de
   percentual (nameScore = 0.95), mais forte que qualquer sinônimo textual.
 - Nome contendo `valor` ou `sem` é sinal de que é um valor monetário
@@ -690,3 +709,40 @@ incl. `BASE CARROS` com ~103 mil linhas):
 - Removido: link "Histórico" morto na sidebar (sem `data-view`/`href`).
 - Adicionado: `.gitattributes` (`eol=lf`) para parar divergência de
   quebra de linha entre as duas máquinas de trabalho.
+
+**Nov/2026 — segunda revisão**, validada com a planilha sintética de
+`dados-teste/` (10 mil O.S, 4 abas) rodando o pipeline real em Node e o
+`dashboard.js` num DOM simulado (jsdom):
+
+- Corrigido: busca limitava KPIs, gráficos e contador aos 500 primeiros
+  resultados (`Filters.apply` herdava o limite padrão de `SheetAPI.search`).
+- Corrigido: filtro de data deslocado em um dia no fuso do Brasil
+  (`new Date("aaaa-mm-dd")` é meia-noite UTC): "até 31/01" excluía o dia 31.
+- Corrigido: `VALOR TOTAL` / `CUSTO TOTAL` classificados como `partsCost`
+  (aba sem "Faturamento Total") — ver `GENERIC_NAME_TOKENS` em §5.
+- Corrigido: colunas de observação classificadas como `percentage`,
+  `number` ou até `date` — testadores de percentual e número agora exigem
+  a célula inteira no formato, e `parseDateSmart` não aceita mais texto
+  livre no parser nativo (`new Date("Desconto de 10%")` dava 01/10/2001).
+  `parseDateSmart` também passou a aceitar `Date` direto.
+- Corrigido: filtro de linhas fantasma podia apagar linhas legítimas
+  quando a coluna-âncora era opcional (ver §3, passo g).
+- Corrigido: `Math.max(...array)` em `renderKPIs` estourava a pilha a
+  partir de ~120 mil linhas.
+- Corrigido: CSV exportado com ponto decimal (o Excel em português, com
+  separador `;`, não lia os valores como número).
+- Corrigido: ocultar uma aba fazia o seletor mostrar outra aba que não a
+  aberta; trocar de aba mantinha o texto da busca já desativada.
+- Corrigido: legenda/tooltip do Chart.js perdiam o estilo escuro nos
+  gráficos de rosca (merge raso de opções em `charts.js`); gráficos de
+  abas anteriores não eram destruídos.
+- Corrigido: renderização dupla em busca, limpar filtros e troca de aba.
+- Corrigido: nomes de coluna e valores de status inseridos no HTML sem
+  `escapeHtml`; tabela sem formato R$ para M.O/Peças e sem formato `%`.
+- Corrigido: importações simultâneas (arrastar outro arquivo durante uma
+  importação) e reenvio do mesmo arquivo após erro, que não disparava nada.
+- Corrigido: conexões IndexedDB nunca fechadas; operadores `<`/`<=` do
+  `SheetAPI.filter` incluíam células vazias.
+- Removido: `indexer.js` (já fora do pipeline, sem consumidores).
+- `engineVersion` → `3.1.0`. Bases importadas antes desta versão mantêm a
+  classificação antiga até serem **reimportadas**.

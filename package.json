@@ -24,7 +24,7 @@
       "js/**/*"
     ],
     "directories": {
-      "output": "release"
+      "output": "dist"
     },
     "win": {
       "target": "nsis",
@@ -35,5 +35,8 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true
     }
+  },
+  "allowScripts": {
+    "electron@31.7.7": true
   }
 }

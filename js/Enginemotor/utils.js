@@ -2,7 +2,7 @@
   utils.js
   Funções utilitárias puras, sem dependência de nenhum outro
   módulo. Usadas por todo o restante do sistema (Analyzer,
-  ExcelEngine, Statistics, Indexer, Dashboard...).
+  ExcelEngine, Statistics, Database, Dashboard...).
 ==============================================================*/
 
 const Utils = (() => {
@@ -115,6 +115,11 @@ const Utils = (() => {
     function parseDateSmart(value) {
         if (value === null || value === undefined || value === "") return null;
 
+        // Já é data (SheetJS com cellDates:true, ou vinda do IndexedDB):
+        // usa direto. Antes ela era convertida para texto e re-interpretada
+        // pelo parser nativo a cada chamada — lento e frágil.
+        if (value instanceof Date) return isNaN(value.getTime()) ? null : value;
+
         // Serial do Excel (número de dias desde 1899-12-30)
         if (typeof value === "number") {
             const excelEpoch = new Date(Date.UTC(1899, 11, 30));
@@ -148,8 +153,24 @@ const Utils = (() => {
             return isNaN(date.getTime()) ? null : date;
         }
 
+        // Último recurso: o parser nativo cobre formatos como "Jan 5, 2025"
+        // ou "05-jan-2025", mas aceita QUALQUER texto com um número —
+        // new Date("Desconto comercial de 10%") é 01/10/2001. Isso fazia
+        // colunas de observação virarem "data" e aparecerem na tabela como
+        // datas inventadas. Só tenta quando o texto parece mesmo uma data.
+        if (!looksLikeDateText(s)) return null;
         const generic = new Date(s);
         return isNaN(generic.getTime()) ? null : generic;
+    }
+
+    const DATE_TEXT_WORD = /^(jan|fev|feb|mar|abr|apr|mai|may|jun|jul|ago|aug|set|sep|out|oct|nov|dez|dec|seg|ter|qua|qui|sex|sab|dom|mon|tue|wed|thu|fri|sat|sun)/;
+    const DATE_TEXT_FILLERS = new Set(["de", "do", "gmt", "utc", "am", "pm"]);
+
+    /** Ano com 4 dígitos + nenhuma palavra além de mês/dia da semana. */
+    function looksLikeDateText(s) {
+        if (!/(^|\D)(19|20|21)\d{2}(\D|$)/.test(s)) return false;
+        const words = normalizeText(s).match(/[a-z]+/g) || [];
+        return words.every(w => DATE_TEXT_FILLERS.has(w) || DATE_TEXT_WORD.test(w));
     }
 
     /** Formata número como moeda BRL */

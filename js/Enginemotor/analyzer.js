@@ -80,6 +80,13 @@ const Analyzer = (() => {
 
     /*==================== TESTADORES DE CONTEÚDO ====================*/
 
+    // Texto de percentual: a célula INTEIRA precisa ser um número seguido
+    // de "%" ("12%", "12,5 %", "-3.2%"). Antes bastava o texto TERMINAR em
+    // "%", e uma observação livre como "Desconto comercial de 10%" contava
+    // como percentual — a coluna de observações virava um card de "média".
+    const PERCENT_TEXT_PATTERN = /^[-+]?\d+(?:[.,]\d+)?\s*%$/;
+    const isPercentText = v => typeof v === "string" && PERCENT_TEXT_PATTERN.test(v.trim());
+
     const TESTERS = {
         // Datas em Excel são armazenadas como serial numérico (dias desde
         // 1899-12-30). QUALQUER número parseia "com sucesso" nesse esquema
@@ -104,7 +111,7 @@ const Analyzer = (() => {
         // 1 rejeitava metade dos valores reais dessas colunas e derrubava
         // o contentScore de percentual; teto 2 cobre esses casos sem abrir
         // demais para contagens grandes.
-        percentage: v => /%\s*$/.test(String(v).trim()) || (typeof v === "number" && v >= 0 && v <= 2),
+        percentage: v => isPercentText(v) || (typeof v === "number" && v >= 0 && v <= 2),
         // "id" é um papel MUITO genérico via conteúdo (qualquer texto
         // alfanumérico curto bate). Sem essa restrição de comprimento e
         // sem exigir evidência de nome (ver guarda mais abaixo), colunas
@@ -155,6 +162,12 @@ const Analyzer = (() => {
     TESTERS.serviceCost = TESTERS.money;
     TESTERS.partsCost = TESTERS.money;
 
+    // "number" sofria do mesmo problema que "money" tinha: parseNumberSmart
+    // extrai dígitos de qualquer texto, então observações livres ("Guincho
+    // incluso (R$ 350,00)") contavam como numéricas. O conteúdo de uma
+    // coluna numérica tem que ser número de ponta a ponta.
+    TESTERS.number = strictMoneyTester;
+
     /** pesos relativos de cada papel quando o conteúdo confirma fortemente */
     const SPECIFICITY = {
         document_cpf: 1.0,
@@ -191,6 +204,18 @@ const Analyzer = (() => {
     const NAME_ANCHORED_ROLES = new Set([
         "serviceCost", "partsCost", "id", "entityName", "modelName", "status"
     ]);
+
+    // Palavras que aparecem em QUALQUER coluna de valor ("VALOR TOTAL",
+    // "CUSTO TOTAL", "VLR PEÇAS"...) e por isso não provam que a coluna é
+    // especificamente de peças ou de mão de obra. Sem esta lista,
+    // "VALOR TOTAL" dividia os tokens "valor"/"total" com os sinônimos
+    // "valor pecas"/"total pecas", passava no bloco (B) e — com a
+    // especificidade maior de partsCost — roubava o papel de "money",
+    // deixando a aba sem "Faturamento Total".
+    const GENERIC_NAME_TOKENS = new Set(["valor", "vlr", "total", "custo", "preco", "cost"]);
+
+    // Abaixo disso a coluna cai em "text" (nenhum papel convenceu).
+    const MIN_CONFIDENCE = 0.28;
 
     // Papéis definidos por FORMATO estrito: se nenhum valor da amostra
     // bate com o formato, o papel é impossível (ver bloco (E)).
@@ -261,12 +286,15 @@ const Analyzer = (() => {
         // abaixo exigem só nameScore >= 0.15, esse RUÍDO passava e fazia
         // a coluna receber um papel MUITO específico por coincidência de
         // string. Para os papéis específicos, exige-se pelo menos um
-        // TOKEN em comum com algum sinônimo — sem isso o sinal de nome é
-        // considerado inexistente e o papel é recusado pelas guardas.
+        // TOKEN DISTINTIVO em comum com algum sinônimo (palavras genéricas
+        // de valor como "valor"/"total" não contam — ver
+        // GENERIC_NAME_TOKENS) — sem isso o sinal de nome é considerado
+        // inexistente e o papel é recusado pelas guardas.
         if (NAME_ANCHORED_ROLES.has(role) && nameScore > 0 && nameScore < 0.9) {
-            const nameTokens = new Set(nameNorm.split(" ").filter(t => t.length > 2));
+            const isDistinctive = t => t.length > 2 && !GENERIC_NAME_TOKENS.has(t);
+            const nameTokens = new Set(nameNorm.split(" ").filter(isDistinctive));
             const sharesToken = dict.some(syn =>
-                syn.split(" ").some(t => t.length > 2 && nameTokens.has(t))
+                syn.split(" ").some(t => isDistinctive(t) && nameTokens.has(t))
             );
             if (!sharesToken) nameScore = 0;
         }
@@ -416,7 +444,7 @@ const Analyzer = (() => {
         // explícito nas células, exige evidência forte de nome ("%" no
         // nome, ou sinônimo como "taxa"/"percentual" com match de palavra).
         if (role === "percentage" && nameScore < 0.4) {
-            const hasPercentMarkers = samples.some(v => /%\s*$/.test(String(v).trim()));
+            const hasPercentMarkers = samples.some(isPercentText);
             if (!hasPercentMarkers) {
                 return { role, nameScore, contentScore: 0, combined: 0 };
             }
@@ -487,7 +515,7 @@ const Analyzer = (() => {
         const best = scored[0];
 
         // limiar mínimo de confiança; abaixo disso cai em "text"
-        const role = best && best.combined >= 0.28 ? best.role : "text";
+        const role = best && best.combined >= MIN_CONFIDENCE ? best.role : "text";
 
         return {
             column: colName,
@@ -525,8 +553,15 @@ const Analyzer = (() => {
         for (const c of columns_analysis.sort((a, b) => b.confidence - a.confidence)) {
             if (uniqueRoles.has(c.role)) {
                 if (takenRoles.has(c.role)) {
-                    const alt = c.candidates.find(cand => cand.role !== c.role);
+                    // O segundo candidato só vale se também passar no limiar
+                    // de confiança e não for outro papel único já ocupado.
+                    const alt = c.candidates.find(cand =>
+                        cand.role !== c.role &&
+                        cand.combined >= MIN_CONFIDENCE &&
+                        !(uniqueRoles.has(cand.role) && takenRoles.has(cand.role))
+                    );
                     c.role = alt ? alt.role : "text";
+                    if (uniqueRoles.has(c.role)) takenRoles.set(c.role, c.column);
                 } else {
                     takenRoles.set(c.role, c.column);
                 }

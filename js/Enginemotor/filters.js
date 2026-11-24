@@ -20,7 +20,9 @@ const Filters = (() => {
     function emit() { listeners.forEach(cb => cb(state)); }
 
     function setSearch(term) {
-        state.searchTerm = term;
+        // Só espaços não é busca: sem o trim, "   " contava como filtro
+        // ativo e gerava um chip de busca vazio.
+        state.searchTerm = String(term || "").trim();
         emit();
     }
 
@@ -95,9 +97,14 @@ const Filters = (() => {
         emit();
     }
 
-    function clearAll() {
+    /**
+     * @param {{silent?: boolean}} opts - silent: não avisa os ouvintes.
+     *        Usado ao trocar de aba: quem chama já vai renderizar a aba
+     *        nova, e avisar renderizaria a aba ANTIGA à toa antes disso.
+     */
+    function clearAll(opts = {}) {
         state = { conditions: [], searchTerm: "" };
-        emit();
+        if (!opts.silent) emit();
     }
 
     function getState() { return state; }
@@ -109,7 +116,10 @@ const Filters = (() => {
     function apply(sheetApi) {
         let rows = sheetApi.filter(state.conditions);
         if (state.searchTerm) {
-            rows = sheetApi.search(state.searchTerm, { rows });
+            // Sem limite: SheetAPI.search corta em 500 por padrão, e com
+            // isso KPIs, gráficos e o contador de registros passavam a
+            // refletir só os 500 primeiros resultados da busca.
+            rows = sheetApi.search(state.searchTerm, { rows, limit: Infinity });
         }
         return rows;
     }

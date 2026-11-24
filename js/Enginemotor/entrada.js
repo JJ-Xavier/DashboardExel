@@ -126,8 +126,18 @@
         return importViaMainThread(file, onProgress);
     }
 
+    // Impede duas importações ao mesmo tempo (ex.: arrastar outro arquivo
+    // enquanto o primeiro ainda processa): as duas gravavam no mesmo lugar
+    // do IndexedDB e disputavam o redirecionamento para o dashboard.
+    let importing = false;
+
     async function handleFile(file) {
         if (!file) return;
+
+        if (importing) {
+            alert("Aguarde: já existe uma importação em andamento.");
+            return;
+        }
 
         errorBox && (errorBox.style.display = "none");
 
@@ -160,6 +170,8 @@
             if (!proceed) return;
         }
 
+        importing = true;
+        let redirecting = false;
         try {
             const rawDatabase = await importSpreadsheet(file, reportProgress);
 
@@ -195,6 +207,7 @@
 
             progressLabel && (progressLabel.textContent = "Concluído! Abrindo dashboard...");
 
+            redirecting = true; // segue bloqueado até a página trocar
             setTimeout(() => {
                 window.location.href = "dashboard.html";
             }, 600);
@@ -208,6 +221,8 @@
                 (err && err.message) ||
                 "Não foi possível processar o arquivo. Verifique se ele não está corrompido."
             );
+        } finally {
+            if (!redirecting) importing = false;
         }
     }
 
@@ -218,7 +233,13 @@
         if (progressWrap) progressWrap.style.display = "none";
     }
 
-    fileInput.addEventListener("change", e => handleFile(e.target.files[0]));
+    fileInput.addEventListener("change", e => {
+        const file = e.target.files[0];
+        // Zera o input: sem isso, escolher de novo o MESMO arquivo (ex.:
+        // depois de corrigir a planilha que deu erro) não disparava "change".
+        e.target.value = "";
+        handleFile(file);
+    });
 
     if (dropZone) {
         ["dragover", "dragenter"].forEach(evt =>

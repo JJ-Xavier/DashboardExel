@@ -77,8 +77,22 @@ const Statistics = (() => {
         return Math.sqrt(variance);
     }
 
+    // Datas são objetos: dois Date do mesmo dia nunca são "iguais" num
+    // Set, então a contagem de únicos virava a contagem de linhas.
+    const uniqueKey = v => (v instanceof Date ? v.getTime() : v);
+
     function uniqueValues(rows, col) {
-        return [...new Set(rows.map(r => r[col]).filter(v => v !== null && v !== undefined && v !== ""))];
+        const seen = new Set();
+        const out = [];
+        for (const r of rows) {
+            const v = r[col];
+            if (v === null || v === undefined || v === "") continue;
+            const key = uniqueKey(v);
+            if (seen.has(key)) continue;
+            seen.add(key);
+            out.push(v);
+        }
+        return out;
     }
 
     function nullCount(rows, col) {
@@ -161,7 +175,7 @@ const Statistics = (() => {
                 continue;
             }
 
-            uniqueSet.add(v);
+            uniqueSet.add(uniqueKey(v));
             freq.set(v, (freq.get(v) || 0) + 1);
             if (freqStr) {
                 const key = String(v);

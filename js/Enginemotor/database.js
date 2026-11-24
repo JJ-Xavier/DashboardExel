@@ -132,10 +132,13 @@ class SheetAPI {
                     case "in":
                         return Array.isArray(cond.value) &&
                             cond.value.some(val => String(val) === String(v));
-                    case ">": return Utils.parseNumberSmart(v) > cond.value;
-                    case "<": return Utils.parseNumberSmart(v) < cond.value;
-                    case ">=": return Utils.parseNumberSmart(v) >= cond.value;
-                    case "<=": return Utils.parseNumberSmart(v) <= cond.value;
+                    // parseNumberSmart devolve null para célula vazia, e
+                    // `null < 5` é true em JS (null vira 0) — sem o teste de
+                    // null, "<"/"<=" incluíam todas as linhas vazias.
+                    case ">": { const n = Utils.parseNumberSmart(v); return n !== null && n > cond.value; }
+                    case "<": { const n = Utils.parseNumberSmart(v); return n !== null && n < cond.value; }
+                    case ">=": { const n = Utils.parseNumberSmart(v); return n !== null && n >= cond.value; }
+                    case "<=": { const n = Utils.parseNumberSmart(v); return n !== null && n <= cond.value; }
                     case "contains":
                         return Utils.normalizeText(v).includes(Utils.normalizeText(cond.value));
                     case "between": {
@@ -227,36 +230,33 @@ function openIDB() {
     });
 }
 
-async function idbPut(key, value) {
+/**
+ * Roda UMA operação numa transação e fecha a conexão ao final. Antes
+ * cada save/load/clear abria uma conexão nova e nunca a fechava; além
+ * disso, o delete não tratava abort (a Promise podia ficar pendurada).
+ */
+async function idbRequest(mode, run) {
     const idb = await openIDB();
     return new Promise((resolve, reject) => {
-        const tx = idb.transaction(IDB_STORE, "readwrite");
-        tx.objectStore(IDB_STORE).put(value, key);
-        tx.oncomplete = () => resolve(true);
-        tx.onerror = () => reject(tx.error);
-        tx.onabort = () => reject(tx.error);
+        let tx;
+        try {
+            tx = idb.transaction(IDB_STORE, mode);
+        } catch (e) {
+            idb.close();
+            reject(e);
+            return;
+        }
+        const req = run(tx.objectStore(IDB_STORE));
+        let result;
+        req.onsuccess = () => { result = req.result; };
+        tx.oncomplete = () => { idb.close(); resolve(result); };
+        tx.onerror = tx.onabort = () => { idb.close(); reject(tx.error || req.error); };
     });
 }
 
-async function idbGet(key) {
-    const idb = await openIDB();
-    return new Promise((resolve, reject) => {
-        const tx = idb.transaction(IDB_STORE, "readonly");
-        const req = tx.objectStore(IDB_STORE).get(key);
-        req.onsuccess = () => resolve(req.result || null);
-        req.onerror = () => reject(req.error);
-    });
-}
-
-async function idbDelete(key) {
-    const idb = await openIDB();
-    return new Promise((resolve, reject) => {
-        const tx = idb.transaction(IDB_STORE, "readwrite");
-        tx.objectStore(IDB_STORE).delete(key);
-        tx.oncomplete = () => resolve(true);
-        tx.onerror = () => reject(tx.error);
-    });
-}
+const idbPut = (key, value) => idbRequest("readwrite", store => store.put(value, key)).then(() => true);
+const idbGet = key => idbRequest("readonly", store => store.get(key)).then(r => r || null);
+const idbDelete = key => idbRequest("readwrite", store => store.delete(key)).then(() => true);
 
 class Database {
 

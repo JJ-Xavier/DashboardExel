@@ -27,7 +27,7 @@ class ExcelEngine {
      * @param {number} config.sampleSize - tamanho de amostra para o Analyzer.
      */
     constructor(config = {}) {
-        this.version = "3.0.0";
+        this.version = "3.1.0";
 
         this.config = {
             headerSearchRows: 20,
@@ -198,17 +198,24 @@ class ExcelEngine {
         // mais confiável disponível como "âncora" e descarta linhas sem
         // valor nela. Se a planilha não tiver nenhuma coluna desse tipo
         // (ex: um resumo agregado por data), não filtra nada.
-        const anchorRole = ["serviceOrder", "entityName", "id"]
-            .find(role => (analysis.roleMap[role] || []).length > 0);
-
-        let cleanRows = rows;
-        if (anchorRole) {
-            const anchorCol = analysis.roleMap[anchorRole][0];
-            cleanRows = rows.filter(r => {
-                const v = r[anchorCol];
-                return v !== null && v !== undefined && String(v).trim() !== "";
-            });
+        //
+        // A âncora só vale se a coluna for de preenchimento obrigatório NA
+        // PRÁTICA, medido nas primeiras linhas (onde estão os dados reais —
+        // as linhas fantasma se acumulam no fim). Sem essa checagem, uma aba
+        // sem O.S cujo "FORNECEDOR"/"RESPONSÁVEL" é opcional perdia em
+        // silêncio todas as linhas com essa coluna vazia, e os totais saíam
+        // errados sem nenhum aviso.
+        const isFilled = v => v !== null && v !== undefined && String(v).trim() !== "";
+        const head = rows.slice(0, 200);
+        let anchorCol = null;
+        for (const role of ["serviceOrder", "entityName", "id"]) {
+            const col = (analysis.roleMap[role] || [])[0];
+            if (!col) continue;
+            const fillRatio = head.filter(r => isFilled(r[col])).length / head.length;
+            if (fillRatio >= 0.9) { anchorCol = col; break; }
         }
+
+        let cleanRows = anchorCol ? rows.filter(r => isFilled(r[anchorCol])) : rows;
 
         if (!cleanRows.length) cleanRows = rows; // segurança: nunca zera a planilha inteira
 
